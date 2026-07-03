@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+problems/*/Results/
+problems/*/POD/*.npy
+problems/*/POD/*.npz
+problems/*/POD/*.png
+problems/*/POD/*.txt
+problems/*/OpInf/models/
+
+*.log
