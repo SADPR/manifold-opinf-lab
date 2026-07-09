@@ -44,6 +44,85 @@ def elementwise_power_matrix(q_columns, polynomial_order=2):
     return np.hstack(blocks)
 
 
+def higher_monomial_exponents(num_modes, degree):
+    """Return exponent rows for the induced MPOD operator features ghat(q).
+
+    The decoder uses g_p(q) = [q**2; ...; q**p].  If the full-order dynamics
+    are quadratic in the state, substituting u = V q + Vbar Xi g_p(q) into
+    the vector field generates all products among q and g_p(q).  This function
+    lists those induced monomials after the constant, linear, and quadratic
+    reduced terms have already been included.
+    """
+    r = int(num_modes)
+    p = int(degree)
+    if r < 1:
+        raise ValueError("num_modes must be positive.")
+    if p < 2:
+        raise ValueError("degree must be >= 2.")
+
+    exponents = set()
+
+    def unit(index, power=1):
+        row = [0] * r
+        row[int(index)] = int(power)
+        return row
+
+    # Linear full-order terms acting on the manifold polynomial g_p(q).
+    for power in range(3, p + 1):
+        for i in range(r):
+            exponents.add(tuple(unit(i, power)))
+
+    # Quadratic interactions between V q and Vbar Xi g_p(q).
+    for i in range(r):
+        for j in range(r):
+            for power in range(2, p + 1):
+                row = unit(i, 1)
+                row[j] += power
+                if sum(row) >= 3:
+                    exponents.add(tuple(row))
+
+    # Quadratic interactions inside Vbar Xi g_p(q).
+    g_terms = []
+    for power in range(2, p + 1):
+        for i in range(r):
+            g_terms.append(tuple(unit(i, power)))
+    for a, first in enumerate(g_terms):
+        for second in g_terms[a:]:
+            row = tuple(first[i] + second[i] for i in range(r))
+            if sum(row) >= 3:
+                exponents.add(row)
+
+    return np.asarray(sorted(exponents, key=lambda item: (sum(item), item)), dtype=np.int64)
+
+
+def evaluate_monomials(q, exponents):
+    """Evaluate monomials q**exponents row by row."""
+    q = np.asarray(q, dtype=np.float64).reshape(-1)
+    exponents = np.asarray(exponents, dtype=np.int64)
+    if exponents.size == 0:
+        return np.empty(0, dtype=np.float64)
+    if exponents.ndim != 2 or exponents.shape[1] != q.size:
+        raise ValueError(f"Exponent shape {exponents.shape} is incompatible with q size {q.size}.")
+    values = np.ones(exponents.shape[0], dtype=np.float64)
+    for j in range(q.size):
+        powers = exponents[:, j]
+        active = powers != 0
+        if np.any(active):
+            values[active] *= q[j] ** powers[active]
+    return values
+
+
+def induced_higher_feature_matrix(q_columns, exponents):
+    """Evaluate the induced higher MPOD features for states stored as columns."""
+    q_columns = np.asarray(q_columns, dtype=np.float64)
+    if q_columns.ndim != 2:
+        raise ValueError(f"q_columns must be 2D, got shape {q_columns.shape}.")
+    exponents = np.asarray(exponents, dtype=np.int64)
+    if exponents.size == 0:
+        return np.empty((q_columns.shape[1], 0), dtype=np.float64)
+    return np.vstack([evaluate_monomials(q_columns[:, j], exponents) for j in range(q_columns.shape[1])])
+
+
 def fit_polynomial_manifold(q_primary, q_secondary, polynomial_order=2, ridge=1e-8):
     """Fit q_secondary ~= Xi g(q_primary) with ridge regularization."""
     q_primary = np.asarray(q_primary, dtype=np.float64)
@@ -160,8 +239,9 @@ def manifold_continuous_feature_matrix(
     include_higher=False,
     max_degree=4,
     include_manifold_dynamics=True,
+    exponents=None,
 ):
-    """Build MPOD dynamics features, optionally appending g(q)."""
+    """Build MPOD dynamics features with the induced higher library ghat(q)."""
     base = continuous_feature_matrix(
         q_columns,
         mu,
@@ -173,8 +253,10 @@ def manifold_continuous_feature_matrix(
     )
     if not include_manifold_dynamics:
         return base
-    g = elementwise_power_matrix(q_columns, polynomial_order=polynomial_order)
-    return np.hstack((base, g))
+    if exponents is None:
+        exponents = higher_monomial_exponents(q_columns.shape[0], polynomial_order)
+    extra = induced_higher_feature_matrix(q_columns, exponents)
+    return np.hstack((base, extra))
 
 
 def manifold_continuous_feature_vector(q, mu, polynomial_order, **kwargs):
@@ -196,6 +278,15 @@ def fit_continuous_operator(theta, qdot, ridge=1e-6, penalize_intercept=False):
 def rhs_continuous(q, mu, model):
     include_manifold_dynamics = bool(model.get("include_manifold_dynamics", False))
     if include_manifold_dynamics:
+        operator_library = model.get("manifold_operator_library", None)
+        if operator_library != "induced_higher":
+            raise ValueError(
+                "This MPOD implementation only supports the induced_higher operator library. "
+                "Retrain with OpInf/stage1_fit_manifold_opinf.py."
+            )
+        exponents = model.get("exponents", None)
+        if exponents is None:
+            raise ValueError("Model is missing induced higher monomial exponents; retrain the MPOD model.")
         theta = manifold_continuous_feature_vector(
             q,
             mu,
@@ -206,6 +297,7 @@ def rhs_continuous(q, mu, model):
             include_higher=bool(model["include_higher"]),
             max_degree=int(model["max_degree"]),
             include_manifold_dynamics=True,
+            exponents=exponents,
         )
     else:
         theta = continuous_feature_vector(
@@ -267,6 +359,8 @@ def load_manifold_model(model_path):
         "feature_mode",
         "pod_basis_path",
         "manifold_feature_type",
+        "manifold_operator_library",
+        "dynamics_feature_type",
     ):
         if key in model:
             model[key] = str(np.asarray(model[key]).item())
@@ -277,6 +371,7 @@ def load_manifold_model(model_path):
         "num_steps",
         "max_degree",
         "num_features",
+        "num_higher_features",
     ):
         if key in model:
             model[key] = int(np.asarray(model[key]).item())
@@ -298,4 +393,6 @@ def load_manifold_model(model_path):
     model["x_mean"] = np.asarray(model["x_mean"], dtype=np.float64)
     model["x_scale"] = np.asarray(model["x_scale"], dtype=np.float64)
     model["xi"] = np.asarray(model["xi"], dtype=np.float64)
+    if "exponents" in model:
+        model["exponents"] = np.asarray(model["exponents"], dtype=np.int64)
     return model

@@ -21,6 +21,7 @@ from manifold_opinf_utils import (
     estimate_time_derivative,
     fit_continuous_operator,
     fit_polynomial_manifold,
+    higher_monomial_exponents,
     manifold_decode,
     manifold_continuous_feature_matrix,
     save_manifold_model,
@@ -29,8 +30,12 @@ from opinf_utils import load_pod_data, project_snapshots
 from stage1_fit_linear_opinf import write_txt_report
 
 
-def _default_model_path(num_primary, num_secondary):
-    return os.path.join(SCRIPT_DIR, "models", f"manifold_continuous_r{int(num_primary)}_q{int(num_secondary)}.npz")
+def _default_model_path(num_primary, num_secondary, polynomial_order=2):
+    return os.path.join(
+        SCRIPT_DIR,
+        "models",
+        f"mpod_induced_continuous_r{int(num_primary)}_q{int(num_secondary)}_p{int(polynomial_order)}.npz",
+    )
 
 
 def _energy_captured(sigma, n_keep):
@@ -71,8 +76,9 @@ def main(
         raise ValueError("--num-primary must be positive.")
     if num_secondary < 1:
         raise ValueError("--num-secondary must be positive.")
+    manifold_operator_library = "induced_higher"
     if model_path is None:
-        model_path = _default_model_path(num_primary, num_secondary)
+        model_path = _default_model_path(num_primary, num_secondary, polynomial_order)
     os.makedirs(results_dir, exist_ok=True)
     model_dir = os.path.dirname(model_path)
     if model_dir:
@@ -93,6 +99,13 @@ def main(
         f"manifold_g={_format_bool(include_manifold_dynamics)}, "
         f"max_degree={int(max_degree)}"
     )
+    print(f"[MPOD-OpInf] manifold_operator_library={manifold_operator_library}")
+
+    exponents = np.empty((0, num_primary), dtype=np.int64)
+    if not include_manifold_dynamics:
+        raise ValueError("MPOD training requires the induced higher manifold dynamics library.")
+    exponents = higher_monomial_exponents(num_primary, polynomial_order)
+    print(f"[MPOD-OpInf] induced higher features={exponents.shape[0]}")
 
     basis_total, sigma, u_ref, metadata, basis_path, _, _ = load_pod_data(
         pod_dir,
@@ -135,6 +148,7 @@ def main(
             include_higher=include_higher,
             max_degree=max_degree,
             include_manifold_dynamics=include_manifold_dynamics,
+            exponents=exponents,
         )
         q_primary_blocks.append(q_primary)
         q_secondary_blocks.append(q_secondary)
@@ -196,10 +210,13 @@ def main(
         x_mean=fit["x_mean"],
         x_scale=fit["x_scale"],
         xi=xi,
+        exponents=exponents,
         num_primary=num_primary,
         num_secondary=num_secondary,
         polynomial_order=int(polynomial_order),
         manifold_feature_type="elementwise_powers",
+        manifold_operator_library=manifold_operator_library,
+        dynamics_feature_type="parametric_induced_higher_polynomial_mpod",
         manifold_ridge=float(manifold_ridge),
         dynamics_ridge=float(dynamics_ridge),
         feature_mode=feature_mode,
@@ -209,6 +226,7 @@ def main(
         include_manifold_dynamics=bool(include_manifold_dynamics),
         max_degree=int(max_degree),
         num_features=int(operator.shape[1]),
+        num_higher_features=int(exponents.shape[0]),
         relative_manifold_training_error=manifold_state_rel_error,
         relative_manifold_coeff_training_error=manifold_coeff_rel_error,
         relative_derivative_training_error=fit["relative_derivative_training_error"],
@@ -232,6 +250,8 @@ def main(
                     ("num_secondary", num_secondary),
                     ("polynomial_order", int(polynomial_order)),
                     ("manifold_feature_type", "elementwise_powers"),
+                    ("manifold_operator_library", manifold_operator_library),
+                    ("dynamics_feature_type", "parametric_induced_higher_polynomial_mpod"),
                     ("manifold_ridge", float(manifold_ridge)),
                     ("dynamics_ridge", float(dynamics_ridge)),
                     ("feature_mode", feature_mode),
@@ -254,6 +274,7 @@ def main(
                 [
                     ("manifold_xi_shape", xi.shape),
                     ("manifold_feature_dimension", int(num_primary) * (int(polynomial_order) - 1)),
+                    ("dynamics_higher_feature_dimension", int(exponents.shape[0])),
                     ("dynamics_design_matrix_shape", theta.shape),
                     ("dynamics_target_matrix_shape", qdot.shape),
                     ("operator_shape", operator.shape),
@@ -303,11 +324,6 @@ if __name__ == "__main__":
     parser.add_argument("--no-quadratic", action="store_true")
     parser.add_argument("--with-higher", action="store_true")
     parser.add_argument("--no-higher", action="store_true", help="Deprecated; higher-order dynamics are off by default.")
-    parser.add_argument(
-        "--no-manifold-dynamics",
-        action="store_true",
-        help="Do not append g(q) to the reduced ODE feature library.",
-    )
     parser.add_argument("--max-degree", type=int, default=2)
     args = parser.parse_args()
     main(
@@ -327,5 +343,5 @@ if __name__ == "__main__":
         include_quadratic=not args.no_quadratic,
         include_higher=bool(args.with_higher and not args.no_higher),
         max_degree=args.max_degree,
-        include_manifold_dynamics=not args.no_manifold_dynamics,
+        include_manifold_dynamics=True,
     )

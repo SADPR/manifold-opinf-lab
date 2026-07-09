@@ -50,6 +50,11 @@ def main(
     del metadata, energy_captured, energy_lost
     basis_primary = basis_total[:, :n_primary]
     basis_secondary = basis_total[:, n_primary:n_total]
+    if model.get("manifold_operator_library", None) != "induced_higher":
+        raise ValueError(
+            "This runner expects an induced_higher MPOD model. "
+            "Retrain with OpInf/stage1_fit_manifold_opinf.py."
+        )
 
     hdm_path = param_to_snap_fn(mu, snap_folder=snap_folder)
     hdm_was_cached = os.path.exists(hdm_path)
@@ -68,7 +73,8 @@ def main(
 
     print(f"[MPOD-OpInf] Loaded model: {model_path}")
     print(f"[MPOD-OpInf] POD basis: {basis_path}")
-    print(f"[MPOD-OpInf] Primary modes r={n_primary}, secondary modes q={n_secondary}")
+    print(f"[MPOD-OpInf] Primary modes r={n_primary}, secondary modes rbar={n_secondary}")
+    print(f"[MPOD-OpInf] Operator library: {model['manifold_operator_library']}")
     print(f"[MPOD-OpInf] Manifold training error: {model['relative_manifold_training_error']:.3e}")
     print(f"[MPOD-OpInf] Derivative training error: {model['relative_derivative_training_error']:.3e}")
 
@@ -150,9 +156,14 @@ def main(
         file.write(f"num_cells: {int(NUM_CELLS)}\n")
         file.write(f"time_scheme: {TIME_SCHEME}\n")
         file.write(f"num_primary: {n_primary}\n")
-        file.write(f"num_secondary: {n_secondary}\n")
+        file.write(f"num_secondary_rbar: {n_secondary}\n")
         file.write(f"polynomial_order: {model['polynomial_order']}\n")
+        file.write(f"manifold_operator_library: {model['manifold_operator_library']}\n")
+        if "dynamics_feature_type" in model:
+            file.write(f"dynamics_feature_type: {model['dynamics_feature_type']}\n")
         file.write(f"num_features: {model['num_features']}\n")
+        if "num_higher_features" in model:
+            file.write(f"num_higher_features: {model['num_higher_features']}\n")
         file.write(f"manifold_ridge: {model['manifold_ridge']:.8e}\n")
         file.write(f"dynamics_ridge: {model['dynamics_ridge']:.8e}\n")
         file.write(f"include_param_linear: {bool(model['include_param_linear'])}\n")

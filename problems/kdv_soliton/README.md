@@ -100,7 +100,9 @@ dq/dt = c + A q + H q_quad + P ghat(q)
 ```
 
 For the KdV benchmark in the paper, the reported setup is `r = 5`, `p = 2`,
-and `r + q = 14`, so the number of secondary POD modes is `q = 9`.
+and `r + rbar = 14`, so the number of secondary POD modes is `rbar = 9`.
+Some filenames still use the historical token `q9`; read it as `rbar=9`, not
+as the evolved primary vector `q(t)`.
 
 Fit the MPOD-OpInf model:
 
@@ -162,7 +164,7 @@ dq/dt = c + A q + H q_quad + P phi_RBF(q)
 ```
 
 For the first `r = 5` trial, we use the paper's same total dimension
-`r + q = 14`, so the secondary dimension is `q = 9`. The RBF map uses the full
+`r + rbar = 14`, so the secondary dimension is `rbar = 9`. The RBF map uses the full
 set of training reduced coordinates as centers by default. This is not the same
 closed polynomial algebra as the paper's MPOD derivation; it is a practical
 nonlinear-feature analog where the polynomial map is replaced by an RBF map.
@@ -225,8 +227,8 @@ dq/dt = c + A q + H q_quad + B z_GPR(q)
 ```
 
 Unlike the raw RBF-feature model above, the online nonlinear feature block has
-dimension `q = 9`, not one feature per training center. For `r = 5`, the learned
-operator therefore has `1 + r + r(r+1)/2 + q = 30` features. The GP
+dimension `rbar = 9`, not one feature per training center. For `r = 5`, the learned
+operator therefore has `1 + r + r(r+1)/2 + rbar = 30` features. The GP
 hyperparameters are selected by maximizing the multi-output log marginal
 likelihood; the online model then uses only the posterior mean `z_GPR(q)`.
 
@@ -295,214 +297,6 @@ Outputs:
 - `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_error_history.png`
 - `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_uncertainty.png`
 - `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_uncertainty_bands.png`
-
-## NM-MPOD No-Quadratic Ablation
-
-The `--no-quadratic` flag keeps the same nonlinear-manifold decoder,
-
-```text
-s(t) ~= s_ref + V q(t) + Vbar eta(q(t))
-```
-
-but removes the explicit quadratic OpInf block from the online dynamics:
-
-```text
-dq/dt = c + A q + B eta(q)
-```
-
-This is a useful ablation, not the main Willcox-style model, because KdV has a
-polynomial nonlinear term and the quadratic OpInf block is the structure-aware
-place to represent it.
-
-Run the GPR no-quadratic ablation:
-
-```bash
-python3 -B OpInf/stage1_fit_gpr_nm_mpod_opinf.py \
-  --num-modes 5 \
-  --total-modes 14 \
-  --kernels gaussian,matern32 \
-  --initial-epsilon 0.5 \
-  --initial-noise 1e-6 \
-  --initial-signal-variance 1.0 \
-  --epsilon-bounds 1e-3,10 \
-  --noise-bounds 1e-12,1e-2 \
-  --signal-variance-bounds 1e-6,1e6 \
-  --gpr-optimizer-maxiter 60 \
-  --regularizer-ca-candidates 1e0 \
-  --regularizer-h-candidates 1e4 \
-  --regularizer-gpr-candidates 1e0,1e2,1e4 \
-  --no-quadratic
-
-python3 -B OpInf/run_gpr_nm_mpod_opinf.py \
-  --model-path OpInf/models/gpr_nm_mpod_noquad_opinf_r5_q9.npz \
-  --results-dir Results/OpInf/GPR-NM-MPOD-NoQuadratic/r5_q9
-```
-
-Run the RBF no-quadratic ablation:
-
-```bash
-python3 -B OpInf/stage1_fit_rbf_nm_mpod_opinf.py \
-  --num-modes 5 \
-  --total-modes 14 \
-  --kernels imq,gaussian \
-  --epsilons 0.01,0.013869189,0.019235439,0.026677993,0.037000212,0.051316292,0.071171532,0.09870914,0.13690157,0.18987137,0.26333618,0.36522591,0.5065387,0.70252808,0.97434944,1.3513436,1.8742039,2.5993688,3.6051136,5 \
-  --rbf-ridges 1e-10,1e-8,1e-6 \
-  --regularizer-ca-candidates 1e0 \
-  --regularizer-h-candidates 1e4 \
-  --regularizer-rbf-candidates 1e4,1e6 \
-  --no-quadratic
-
-python3 -B OpInf/run_rbf_nm_mpod_opinf.py \
-  --model-path OpInf/models/rbf_nm_mpod_noquad_opinf_r5_q9.npz \
-  --results-dir Results/OpInf/RBF-NM-MPOD-NoQuadratic/r5_q9
-```
-
-Current no-quadratic output:
-
-```text
-GPR no-quadratic:
-  training window error:    8.575201e-02
-  prediction window error:  8.770766e-02
-  full window error:        8.732928e-02
-
-RBF no-quadratic:
-  selected kernel:          gaussian
-  selected epsilon:         7.025281e-01
-  selected RBF ridge:       1.000000e-10
-  training window error:    5.666771e-01
-  prediction window error:  1.699518e+00
-  full window error:        1.544571e+00
-```
-
-For this KdV test, the GPR map already captures almost all of the correction and
-the quadratic block changes very little. The RBF-feature model strongly needs
-the quadratic block; without it the derivative fit and rollout degrade badly.
-
-## MAM-OpInf
-
-The alternating-minimization manifold model uses the same online reduced
-dynamics as MPOD-OpInf,
-
-```text
-s(t) ~= s_ref + V q(t) + Vbar Xi g(q(t))
-dq/dt = c + A q + H q_quad + P ghat(q)
-```
-
-but learns `V`, `Vbar`, `Xi`, and the training coordinates `q` by alternating:
-
-1. orthogonal Procrustes update for `Omega = [V, Vbar]`,
-2. linear least-squares update for `Xi`,
-3. nonlinear least-squares updates for the reduced coordinates `q_j`.
-
-The defaults follow the KdV paper/notebook setup: initialization from MPOD,
-`r = 5`, `r + q = 14`, `p = 2`, `gamma = 1e-3`, AM tolerance `1e-3`,
-and nonlinear least-squares tolerance `1e-9`.
-
-Fit the MAM-OpInf model:
-
-```bash
-python3 -B OpInf/stage1_fit_mam_opinf.py \
-  --num-modes 5 \
-  --total-modes 14 \
-  --degree 2 \
-  --gamma 1e-3
-```
-
-Run the MAM rollout:
-
-```bash
-python3 -B OpInf/run_mam_opinf.py \
-  --model-path OpInf/models/mam_opinf_r5_p2_q9.npz \
-  --results-dir Results/OpInf/MAM/r5_p2_q9
-```
-
-Current status of this implementation:
-
-```text
-AM iterations:            9
-MAM reconstruction error: 3.264986e-01
-MAM energy metric:        8.960498e-01
-training rollout error:   3.467641e-01
-prediction error:         unstable / not reproduced yet
-```
-
-This is not yet a faithful reproduction of the paper's reported MAM prediction
-error. This kept run is the paper-style continuous MAM setup used here for
-comparison; it should be treated as an active reproduction/debugging target
-rather than a validated paper-matching result.
-
-Outputs:
-
-- `OpInf/models/mam_opinf_r5_p2_q9.npz`
-- `Results/OpInf/Training/mam_opinf_r5_p2_q9_training_summary.txt`
-- `Results/OpInf/Training/mam_opinf_r5_p2_q9_regularizer_grid.csv`
-- `Results/OpInf/Training/mam_opinf_r5_p2_q9_am_history.csv`
-- `Results/OpInf/Training/mam_opinf_r5_p2_q9_basis_comparison.png`
-- `Results/OpInf/MAM/r5_p2_q9/mam_opinf_r5_p2_q9_summary.txt`
-- `Results/OpInf/MAM/r5_p2_q9/mam_opinf_r5_p2_q9_spacetime.png`
-- `Results/OpInf/MAM/r5_p2_q9/mam_opinf_r5_p2_q9_snapshots.png`
-- `Results/OpInf/MAM/r5_p2_q9/mam_opinf_r5_p2_q9_error_history.png`
-
-## Three-Model r = 16 Comparison
-
-The paper also reports KdV results at `r = 16`, `p = 2`, and `r + q = 25`,
-so `q = 9` for MPOD/MAM. Run the three models with:
-
-```bash
-python3 -B OpInf/stage1_fit_standard_opinf.py \
-  --num-modes 16 \
-  --model-path OpInf/models/standard_quadratic_opinf_r16.npz \
-  --results-dir Results/OpInf/Training/r16_sweep
-
-python3 -B OpInf/run_standard_opinf.py \
-  --model-path OpInf/models/standard_quadratic_opinf_r16.npz \
-  --results-dir Results/OpInf/Standard/r16
-
-python3 -B OpInf/stage1_fit_mpod_opinf.py \
-  --num-modes 16 \
-  --total-modes 25 \
-  --degree 2 \
-  --gamma 1e-3 \
-  --model-path OpInf/models/mpod_opinf_r16_p2_q9.npz \
-  --results-dir Results/OpInf/Training/r16_sweep
-
-python3 -B OpInf/run_mpod_opinf.py \
-  --model-path OpInf/models/mpod_opinf_r16_p2_q9.npz \
-  --results-dir Results/OpInf/MPOD/r16_p2_q9
-
-python3 -B OpInf/stage1_fit_mam_opinf.py \
-  --num-modes 16 \
-  --total-modes 25 \
-  --degree 2 \
-  --gamma 1e-3 \
-  --model-path OpInf/models/mam_opinf_r16_p2_q9.npz \
-  --results-dir Results/OpInf/Training/r16_sweep
-
-python3 -B OpInf/run_mam_opinf.py \
-  --model-path OpInf/models/mam_opinf_r16_p2_q9.npz \
-  --results-dir Results/OpInf/MAM/r16_p2_q9
-```
-
-Generate the combined spacetime plot:
-
-```bash
-python3 -B OpInf/plot_r16_three_model_comparison.py \
-  --out-path Results/OpInf/r16_three_model_spacetime.png
-```
-
-Current output from this implementation:
-
-| model | train error | prediction error | full error |
-| --- | ---: | ---: | ---: |
-| Standard OpInf, `r=16` | `5.499863e-02` | `5.669589e-02` | `5.636818e-02` |
-| MPOD-OpInf, `r=16,p=2,q=9` | `3.965728e-02` | `4.114963e-02` | `4.086015e-02` |
-| MAM-OpInf, `r=16,p=2,q=9` | `3.955382e-02` | `4.101131e-02` | `4.072848e-02` |
-
-These runs are stable through `T = 1` and do not reproduce the large phase
-error shown in the paper's `r = 16` figure. The training errors are in the same
-range as the paper, but the prediction errors are much smaller here; this points
-to a remaining implementation/regularization/protocol difference rather than a
-failure of the three-model configuration itself.
 
 ## Smoke Test
 

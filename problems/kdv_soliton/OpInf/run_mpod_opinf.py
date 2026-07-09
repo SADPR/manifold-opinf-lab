@@ -77,7 +77,7 @@ def main(
         rom,
         train_final_time,
         spacetime_plot,
-        title=f"KdV MPOD-OpInf, r={num_modes}, p={degree}, q={num_secondary}",
+        title=rf"KdV MPOD-OpInf, r={num_modes}, p={degree}, $\bar r$={num_secondary}",
         rom_label="MPOD-OpInf",
     )
     plot_snapshot_comparison(
@@ -94,7 +94,7 @@ def main(
         error_history,
         train_final_time,
         error_plot,
-        title=f"MPOD-OpInf error history, r={num_modes}, p={degree}, q={num_secondary}",
+        title=rf"MPOD-OpInf error history, r={num_modes}, p={degree}, $\bar r$={num_secondary}",
     )
     np.savez(
         q_path,
@@ -116,7 +116,7 @@ def main(
                     ("model_path", model_path),
                     ("snapshot_file", snapshot_file),
                     ("num_modes_r", num_modes),
-                    ("num_secondary_q", num_secondary),
+                    ("num_secondary_rbar", num_secondary),
                     ("total_modes_r_plus_q", int(model["total_modes"])),
                     ("polynomial_degree_p", degree),
                     ("gamma", model["gamma"]),
@@ -160,7 +160,7 @@ def main(
     print("====================================================")
     print(f"[KDV-MPOD] model={model_path}")
     print(
-        f"[KDV-MPOD] r={num_modes}, q={num_secondary}, p={degree}, "
+        f"[KDV-MPOD] r={num_modes}, rbar={num_secondary}, p={degree}, "
         f"regularizer=(c={float(model['ridge_c']):.3e}, A={float(model['ridge_a']):.3e}, "
         f"H={float(model['ridge_h']):.3e}, P={float(model['ridge_p']):.3e})"
     )

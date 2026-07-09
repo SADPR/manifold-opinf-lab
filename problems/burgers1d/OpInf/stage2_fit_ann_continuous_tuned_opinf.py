@@ -28,21 +28,40 @@ from opinf_utils import load_pod_data, project_snapshots
 from stage1_fit_linear_opinf import write_txt_report
 
 
-DEFAULT_ANN_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "ann_manifold_linear_plus_ann_r20_q123.npz")
+DEFAULT_ANN_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "ann_manifold_linear_plus_ann_r10_q133.npz")
+OPERATOR_MODES = ("full_quadratic", "latent_closure", "lifted_linear")
 
 
-def _default_model_path(num_primary, num_secondary, include_quadratic=False, include_full_manifold_quadratic=False):
-    if include_full_manifold_quadratic:
-        name = f"ann_nm_mpod_fullquadratic_continuous_tuned_r{int(num_primary)}_q{int(num_secondary)}.npz"
-    elif include_quadratic:
-        name = f"ann_nm_mpod_quadratic_continuous_tuned_r{int(num_primary)}_q{int(num_secondary)}.npz"
-    else:
-        name = f"ann_nm_mpod_noquadratic_continuous_tuned_r{int(num_primary)}_q{int(num_secondary)}.npz"
-    return os.path.join(
-        SCRIPT_DIR,
-        "models",
-        name,
-    )
+def _operator_mode_settings(operator_mode):
+    mode = str(operator_mode)
+    if mode == "full_quadratic":
+        return {
+            "include_quadratic": True,
+            "include_full_manifold_quadratic": True,
+            "dynamics_feature_type": "continuous_tuned_full_quadratic_nm_mpod",
+            "description": "full quadratic NM-MPOD: [1, eta, q, eta*q, q_quad, z, q*z, z_quad]",
+        }
+    if mode == "latent_closure":
+        return {
+            "include_quadratic": True,
+            "include_full_manifold_quadratic": False,
+            "dynamics_feature_type": "continuous_tuned_latent_closure_nm_mpod",
+            "description": "latent-closure NM-MPOD: [1, eta, q, eta*q, q_quad, z]",
+        }
+    if mode == "lifted_linear":
+        return {
+            "include_quadratic": False,
+            "include_full_manifold_quadratic": False,
+            "dynamics_feature_type": "continuous_tuned_lifted_linear_nm_mpod",
+            "description": "lifted-linear NM-MPOD: [1, eta, q, eta*q, z]",
+        }
+    raise ValueError(f"Unknown operator mode {operator_mode!r}; choices are {OPERATOR_MODES}.")
+
+
+def _default_model_path(num_primary, num_secondary, operator_mode="full_quadratic"):
+    tag = str(operator_mode).replace("_", "")
+    name = f"ann_nm_mpod_{tag}_continuous_tuned_r{int(num_primary)}_q{int(num_secondary)}.npz"
+    return os.path.join(SCRIPT_DIR, "models", name)
 
 
 def _parse_float_list(text):
@@ -137,6 +156,7 @@ def main(
     snap_folder=os.path.join(PROJECT_ROOT, "Results", "param_snaps"),
     model_path=None,
     results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf-ANN-Manifold", "ContinuousTuned", "Training"),
+    operator_mode="full_quadratic",
     dt=DT,
     num_steps=NUM_STEPS,
     ridges=(1e-4, 1e-2, 1e0, 1e2, 1e4, 1e6),
@@ -145,23 +165,17 @@ def main(
     random_seed=42,
     max_norm=1e12,
     device=None,
-    include_quadratic=False,
-    include_full_manifold_quadratic=False,
 ):
     os.makedirs(results_dir, exist_ok=True)
     ann_model = load_ann_manifold_model(ann_model_path, device=device)
     num_primary = int(ann_model["num_primary"])
     num_secondary = int(ann_model["num_secondary"])
     n_total = num_primary + num_secondary
-    include_full_manifold_quadratic = bool(include_full_manifold_quadratic)
-    include_quadratic = bool(include_quadratic) or include_full_manifold_quadratic
+    mode_settings = _operator_mode_settings(operator_mode)
+    include_quadratic = bool(mode_settings["include_quadratic"])
+    include_full_manifold_quadratic = bool(mode_settings["include_full_manifold_quadratic"])
     if model_path is None:
-        model_path = _default_model_path(
-            num_primary,
-            num_secondary,
-            include_quadratic=include_quadratic,
-            include_full_manifold_quadratic=include_full_manifold_quadratic,
-        )
+        model_path = _default_model_path(num_primary, num_secondary, operator_mode=operator_mode)
     model_dir = os.path.dirname(model_path)
     if model_dir:
         os.makedirs(model_dir, exist_ok=True)
@@ -175,6 +189,8 @@ def main(
     print("  STAGE 2: TUNE CONTINUOUS ANN-NM-MPOD OPINF ROM")
     print("====================================================")
     print(f"[ANN-Cont-Tuned] source ANN model: {ann_model_path}")
+    print(f"[ANN-Cont-Tuned] operator_mode={operator_mode}")
+    print(f"[ANN-Cont-Tuned] feature form: {mode_settings['description']}")
     print(f"[ANN-Cont-Tuned] num_primary={num_primary}, num_secondary={num_secondary}")
     print("[ANN-Cont-Tuned] model form: dq/dt = W theta(q, mu)")
     print(f"[ANN-Cont-Tuned] q quadratic terms: {'enabled' if include_quadratic else 'disabled'}")
@@ -301,11 +317,8 @@ def main(
         x_scale=final_fit["x_scale"],
         num_primary=num_primary,
         num_secondary=num_secondary,
-        dynamics_feature_type=(
-            "continuous_tuned_full_quadratic_manifold"
-            if include_full_manifold_quadratic
-            else ("continuous_tuned_quadratic_plus_ann" if include_quadratic else "continuous_tuned_linear_plus_ann")
-        ),
+        operator_mode=np.asarray(str(operator_mode)),
+        dynamics_feature_type=mode_settings["dynamics_feature_type"],
         dynamics_ridge=selected_ridge,
         rk4_substeps=selected_substeps,
         feature_mode=ann_model["feature_mode"],
@@ -368,6 +381,8 @@ def main(
                 [
                     ("model_family", ANN_MANIFOLD_MODEL_FAMILY),
                     ("source_ann_model_path", ann_model_path),
+                    ("operator_mode", str(operator_mode)),
+                    ("operator_mode_description", mode_settings["description"]),
                     ("num_primary", num_primary),
                     ("num_secondary", num_secondary),
                     ("quadratic_terms", include_quadratic),
@@ -439,6 +454,7 @@ if __name__ == "__main__":
     parser.add_argument("--snap-folder", default=os.path.join(PROJECT_ROOT, "Results", "param_snaps"))
     parser.add_argument("--model-path", default=None)
     parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf-ANN-Manifold", "ContinuousTuned", "Training"))
+    parser.add_argument("--operator-mode", choices=OPERATOR_MODES, default="full_quadratic")
     parser.add_argument("--dt", type=float, default=DT)
     parser.add_argument("--num-steps", type=int, default=NUM_STEPS)
     parser.add_argument("--ridges", default="1e-4,1e-2,1e0,1e2,1e4,1e6")
@@ -447,16 +463,6 @@ if __name__ == "__main__":
     parser.add_argument("--random-seed", type=int, default=42)
     parser.add_argument("--max-norm", type=float, default=1e12)
     parser.add_argument("--device", default=None)
-    parser.add_argument(
-        "--with-quadratic",
-        action="store_true",
-        help="Include compact q_i q_j terms in the reduced ODE.",
-    )
-    parser.add_argument(
-        "--with-full-manifold-quadratic",
-        action="store_true",
-        help="Include q_i N_j and compact N_i N_j terms in addition to q_i q_j.",
-    )
     args = parser.parse_args()
     main(
         ann_model_path=args.ann_model_path,
@@ -464,6 +470,7 @@ if __name__ == "__main__":
         snap_folder=args.snap_folder,
         model_path=args.model_path,
         results_dir=args.results_dir,
+        operator_mode=args.operator_mode,
         dt=args.dt,
         num_steps=args.num_steps,
         ridges=_parse_float_list(args.ridges),
@@ -472,6 +479,4 @@ if __name__ == "__main__":
         random_seed=args.random_seed,
         max_norm=args.max_norm,
         device=args.device,
-        include_quadratic=args.with_quadratic,
-        include_full_manifold_quadratic=args.with_full_manifold_quadratic,
     )

@@ -25,13 +25,19 @@ from opinf_utils import load_pod_data, project_snapshots
 from run_opinf import _plot_error_history, _relative_error_history, _safe_tag
 
 
-DEFAULT_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "ann_manifold_linear_plus_ann_r20_q123.npz")
+DEFAULT_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "ann_nm_mpod_fullquadratic_continuous_tuned_r10_q133.npz")
 
 
 def _model_label(model):
     if bool(model.get("include_ann_dynamics", True)):
+        operator_mode = str(model.get("operator_mode", ""))
+        feature_type = str(model.get("dynamics_feature_type", ""))
         if bool(model.get("include_full_manifold_quadratic", False)):
             suffix = "full quadratic"
+        elif operator_mode == "latent_closure" or "latent_closure" in feature_type:
+            suffix = "latent closure"
+        elif operator_mode == "lifted_linear" or "lifted_linear" in feature_type:
+            suffix = "lifted linear"
         else:
             suffix = "quadratic" if bool(model.get("include_quadratic", False)) else "no quadratic"
         return f"ANN-NM-MPOD OpInf ({suffix})"
@@ -84,7 +90,7 @@ def main(
     print(f"[ANN-OpInf] Loaded model: {model_path}")
     print(f"[ANN-OpInf] Model label: {_model_label(model)}")
     print(f"[ANN-OpInf] POD basis: {basis_path}")
-    print(f"[ANN-OpInf] Primary modes r={n_primary}, secondary modes q={n_secondary}")
+    print(f"[ANN-OpInf] Primary modes r={n_primary}, secondary modes rbar={n_secondary}")
     print(f"[ANN-OpInf] ANN hidden dims: {model['ann_hidden_dims']}")
     print(f"[ANN-OpInf] ANN include mu: {bool(model['ann_include_mu'])}")
     print(f"[ANN-OpInf] ANN best val MSE: {model['ann_best_val_mse']:.3e}")
@@ -165,6 +171,7 @@ def main(
         file.write("[configuration]\n")
         file.write(f"model_family: {model.get('model_family', 'ann_manifold_continuous')}\n")
         file.write(f"model_label: {_model_label(model)}\n")
+        file.write(f"operator_mode: {model.get('operator_mode', 'unknown')}\n")
         file.write(f"mu1: {mu[0]:.8e}\n")
         file.write(f"mu2: {mu[1]:.8e}\n")
         file.write(f"dt: {float(dt):.8e}\n")
@@ -172,7 +179,7 @@ def main(
         file.write(f"num_cells: {int(NUM_CELLS)}\n")
         file.write(f"time_scheme: {TIME_SCHEME}\n")
         file.write(f"num_primary: {n_primary}\n")
-        file.write(f"num_secondary: {n_secondary}\n")
+        file.write(f"num_secondary_rbar: {n_secondary}\n")
         file.write(f"ann_include_mu: {bool(model['ann_include_mu'])}\n")
         file.write(f"ann_hidden_dims: {model['ann_hidden_dims']}\n")
         file.write(f"ann_best_val_mse: {model['ann_best_val_mse']:.8e}\n")

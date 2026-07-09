@@ -28,6 +28,8 @@ from gpr_nm_mpod_opinf_utils import (
 from kdv.core import write_txt_report
 from standard_opinf_utils import plot_singular_values
 
+OPERATOR_MODES = ("full_quadratic", "latent_closure", "lifted_linear")
+
 
 def _parse_float_list(text):
     return [float(item.strip()) for item in str(text).split(",") if item.strip()]
@@ -44,10 +46,40 @@ def _parse_float_pair(text):
     return (values[0], values[1])
 
 
+def _operator_mode_settings(operator_mode):
+    mode = str(operator_mode)
+    if mode == "full_quadratic":
+        return {
+            "include_quadratic": True,
+            "include_full_quadratic": True,
+            "model_variant": "gpr_nm_mpod_full_quadratic_features",
+            "dynamics": "dq/dt = c + A q + Hqq q_quad + B z_GPR(q) + Hqz (q kron z_GPR(q)) + Hzz z_quad",
+            "description": "full-quadratic NM-MPOD: [1, q, q_quad, z_GPR(q), q kron z_GPR(q), z_GPR(q)_quad]",
+        }
+    if mode == "latent_closure":
+        return {
+            "include_quadratic": True,
+            "include_full_quadratic": False,
+            "model_variant": "gpr_nm_mpod_latent_closure_features",
+            "dynamics": "dq/dt = c + A q + H q_quad + B z_GPR(q)",
+            "description": "latent-closure NM-MPOD: [1, q, q_quad, z_GPR(q)]",
+        }
+    if mode == "lifted_linear":
+        return {
+            "include_quadratic": False,
+            "include_full_quadratic": False,
+            "model_variant": "gpr_nm_mpod_lifted_linear_features",
+            "dynamics": "dq/dt = c + A q + B z_GPR(q)",
+            "description": "lifted-linear NM-MPOD: [1, q, z_GPR(q)]",
+        }
+    raise ValueError(f"Unknown operator mode {operator_mode!r}; choices are {OPERATOR_MODES}.")
+
+
 def main(
     snapshot_file=os.path.join(PROJECT_ROOT, "Results", "FOM", "kdv_soliton_fom_snapshots.npz"),
-    model_path=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_opinf_r5_q9.npz"),
-    results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_r5_q9"),
+    model_path=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_latentclosure_r5_q9.npz"),
+    results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_latentclosure_r5_q9"),
+    operator_mode="latent_closure",
     num_modes=5,
     total_modes=14,
     kernels=("gaussian", "matern32"),
@@ -64,7 +96,6 @@ def main(
     jitter=1e-12,
     rk4_substeps=1,
     max_norm=1e6,
-    include_quadratic=True,
 ):
     x, times, snapshots, train_mask, data = load_fom_dataset(snapshot_file)
     dt = float(np.median(np.diff(times)))
@@ -74,13 +105,9 @@ def main(
     r = int(num_modes)
     total = int(total_modes)
     q_secondary = total - r
-    include_quadratic = bool(include_quadratic)
-    default_model_path = os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_opinf_r5_q9.npz")
-    default_results_dir = os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_r5_q9")
-    if not include_quadratic and model_path == default_model_path:
-        model_path = os.path.join(SCRIPT_DIR, "models", f"gpr_nm_mpod_noquad_opinf_r{r}_q{q_secondary}.npz")
-    if not include_quadratic and results_dir == default_results_dir:
-        results_dir = os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", f"gpr_nm_mpod_noquad_r{r}_q{q_secondary}")
+    mode_settings = _operator_mode_settings(operator_mode)
+    include_quadratic = bool(mode_settings["include_quadratic"])
+    include_full_quadratic = bool(mode_settings["include_full_quadratic"])
     os.makedirs(results_dir, exist_ok=True)
     h_candidates = tuple(regularizer_h_candidates) if include_quadratic else (0.0,)
 
@@ -89,7 +116,10 @@ def main(
     print("====================================================")
     print(f"[KDV-GPR-NM-MPOD] snapshot_file={snapshot_file}")
     print(f"[KDV-GPR-NM-MPOD] r={r}, q={q_secondary}, total_modes={total}")
+    print(f"[KDV-GPR-NM-MPOD] operator_mode={operator_mode}")
+    print(f"[KDV-GPR-NM-MPOD] feature form: {mode_settings['description']}")
     print(f"[KDV-GPR-NM-MPOD] include_quadratic={include_quadratic}")
+    print(f"[KDV-GPR-NM-MPOD] include_full_quadratic={include_full_quadratic}")
     print(f"[KDV-GPR-NM-MPOD] train snapshots={train_snapshots.shape[1]}, train window=[{train_times[0]:.4f}, {train_times[-1]:.4f}]")
     print(f"[KDV-GPR-NM-MPOD] GP kernels={','.join(kernels)}")
     print(
@@ -125,7 +155,9 @@ def main(
     q_mean = manifold["q_mean"]
     q_scale = manifold["q_scale"]
     num_quadratic_features = r * (r + 1) // 2 if include_quadratic else 0
-    num_features = 1 + r + num_quadratic_features + q_secondary
+    num_mixed_features = r * q_secondary if include_full_quadratic else 0
+    num_secondary_quadratic_features = q_secondary * (q_secondary + 1) // 2 if include_full_quadratic else 0
+    num_features = 1 + r + num_quadratic_features + q_secondary + num_mixed_features + num_secondary_quadratic_features
 
     print(
         "[KDV-GPR-NM-MPOD][GP-ML] "
@@ -163,6 +195,7 @@ def main(
                     ridge_h=float(regularizer_h),
                     ridge_gpr=float(regularizer_gpr),
                     include_quadratic=include_quadratic,
+                    include_full_quadratic=include_full_quadratic,
                 )
                 q_rollout, unstable, unstable_index = rollout_rk4(
                     q0,
@@ -178,6 +211,7 @@ def main(
                     max_norm=max_norm,
                     substeps=rk4_substeps,
                     include_quadratic=include_quadratic,
+                    include_full_quadratic=include_full_quadratic,
                 )
                 train_rom = reconstruct_gpr_nm_mpod_snapshots(
                     q_rollout,
@@ -212,6 +246,8 @@ def main(
                     "unstable_index": int(unstable_index),
                     "rank": int(fit["rank"]),
                     "num_quadratic_features": int(num_quadratic_features),
+                    "num_mixed_features": int(num_mixed_features),
+                    "num_secondary_quadratic_features": int(num_secondary_quadratic_features),
                     "num_features": int(num_features),
                 }
                 rows.append(row)
@@ -239,18 +275,18 @@ def main(
     save_model(
         model_path,
         snapshot_file=np.asarray(snapshot_file),
-        model_variant=np.asarray(
-            "gpr_nm_mpod_quadratic_plus_gpr_secondary_features"
-            if include_quadratic
-            else "gpr_nm_mpod_linear_plus_gpr_secondary_features_no_quadratic"
-        ),
+        operator_mode=np.asarray(str(operator_mode)),
+        model_variant=np.asarray(str(mode_settings["model_variant"])),
         include_quadratic=np.asarray(int(include_quadratic), dtype=np.int64),
+        include_full_quadratic=np.asarray(int(include_full_quadratic), dtype=np.int64),
         num_modes=np.asarray(r, dtype=np.int64),
         total_modes=np.asarray(total, dtype=np.int64),
         num_secondary=np.asarray(q_secondary, dtype=np.int64),
         num_features=np.asarray(int(selected["num_features"]), dtype=np.int64),
         num_quadratic_features=np.asarray(int(selected["num_quadratic_features"]), dtype=np.int64),
         num_gpr_features=np.asarray(int(q_secondary), dtype=np.int64),
+        num_mixed_features=np.asarray(int(selected["num_mixed_features"]), dtype=np.int64),
+        num_secondary_quadratic_features=np.asarray(int(selected["num_secondary_quadratic_features"]), dtype=np.int64),
         kernel=np.asarray(str(selected["kernel"])),
         epsilon=np.asarray(float(selected["epsilon"]), dtype=np.float64),
         noise=np.asarray(float(selected["noise"]), dtype=np.float64),
@@ -286,7 +322,7 @@ def main(
         unstable_index=np.asarray(int(selected["unstable_index"]), dtype=np.int64),
     )
 
-    tag = f"gpr_nm_mpod_opinf_r{r}_q{q_secondary}" if include_quadratic else f"gpr_nm_mpod_noquad_opinf_r{r}_q{q_secondary}"
+    tag = f"gpr_nm_mpod_opinf_r{r}_q{q_secondary}"
     csv_path = os.path.join(results_dir, f"{tag}_regularizer_grid.csv")
     with open(csv_path, "w", encoding="utf-8") as file:
         file.write(
@@ -316,12 +352,9 @@ def main(
             (
                 "manifold",
                 [
-                    (
-                        "model_family",
-                        "GPR Nonlinear-Map MPOD-OpInf"
-                        if include_quadratic
-                        else "GPR Nonlinear-Map MPOD-OpInf no-quadratic ablation",
-                    ),
+                    ("model_family", "GPR Nonlinear-Map MPOD-OpInf"),
+                    ("operator_mode", str(operator_mode)),
+                    ("operator_mode_description", mode_settings["description"]),
                     ("state_approximation", "s ~= s_ref + V q + Vbar z_GPR(q)"),
                     ("num_modes_r", r),
                     ("num_secondary_q", q_secondary),
@@ -343,14 +376,13 @@ def main(
             (
                 "opinf",
                 [
-                    (
-                        "dynamics",
-                        "dq/dt = c + A q + H q_quad + B z_GPR(q)"
-                        if include_quadratic
-                        else "dq/dt = c + A q + B z_GPR(q)",
-                    ),
+                    ("dynamics", mode_settings["dynamics"]),
                     ("num_features", selected["num_features"]),
                     ("include_quadratic", include_quadratic),
+                    ("include_full_quadratic", include_full_quadratic),
+                    ("num_quadratic_features", selected["num_quadratic_features"]),
+                    ("num_mixed_features", selected["num_mixed_features"]),
+                    ("num_secondary_quadratic_features", selected["num_secondary_quadratic_features"]),
                     ("derivative_estimator", "fourth-order centered finite difference on interior samples"),
                 ],
             ),
@@ -391,8 +423,9 @@ def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fit GPR-NM-MPOD-OpInf for KdV.")
     parser.add_argument("--snapshot-file", default=os.path.join(PROJECT_ROOT, "Results", "FOM", "kdv_soliton_fom_snapshots.npz"))
-    parser.add_argument("--model-path", default=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_opinf_r5_q9.npz"))
-    parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_r5_q9"))
+    parser.add_argument("--model-path", default=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_latentclosure_r5_q9.npz"))
+    parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_latentclosure_r5_q9"))
+    parser.add_argument("--operator-mode", choices=OPERATOR_MODES, default="latent_closure")
     parser.add_argument("--num-modes", type=int, default=5)
     parser.add_argument("--total-modes", type=int, default=14)
     parser.add_argument("--kernels", default="gaussian,matern32")
@@ -409,16 +442,12 @@ if __name__ == "__main__":
     parser.add_argument("--jitter", type=float, default=1e-12)
     parser.add_argument("--rk4-substeps", type=int, default=1)
     parser.add_argument("--max-norm", type=float, default=1e6)
-    parser.add_argument(
-        "--no-quadratic",
-        action="store_true",
-        help="Ablation: fit dq/dt = c + A q + B z_GPR(q), omitting H q_quad.",
-    )
     args = parser.parse_args()
     main(
         snapshot_file=args.snapshot_file,
         model_path=args.model_path,
         results_dir=args.results_dir,
+        operator_mode=args.operator_mode,
         num_modes=args.num_modes,
         total_modes=args.total_modes,
         kernels=_parse_str_list(args.kernels),
@@ -435,5 +464,4 @@ if __name__ == "__main__":
         jitter=args.jitter,
         rk4_substeps=args.rk4_substeps,
         max_norm=args.max_norm,
-        include_quadratic=not args.no_quadratic,
     )

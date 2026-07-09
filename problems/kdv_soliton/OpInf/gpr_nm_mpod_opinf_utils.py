@@ -351,9 +351,21 @@ def gpr_nm_mpod_feature_vector(
     q_scale,
     signal_variance=1.0,
     include_quadratic=True,
+    include_full_quadratic=False,
 ):
     q = np.asarray(q, dtype=np.float64).reshape(-1)
     secondary = gp_predict_secondary(q, centers, alpha, kernel, epsilon, q_mean, q_scale, signal_variance=signal_variance)
+    if bool(include_full_quadratic):
+        return np.concatenate(
+            (
+                [1.0],
+                q,
+                compact_quadratic_features(q),
+                secondary,
+                np.kron(q, secondary),
+                compact_quadratic_features(secondary),
+            )
+        )
     if bool(include_quadratic):
         return np.concatenate(([1.0], q, compact_quadratic_features(q), secondary))
     return np.concatenate(([1.0], q, secondary))
@@ -369,6 +381,7 @@ def gpr_nm_mpod_feature_matrix(
     q_scale,
     signal_variance=1.0,
     include_quadratic=True,
+    include_full_quadratic=False,
 ):
     q_samples = np.asarray(q_samples, dtype=np.float64)
     if q_samples.ndim != 2:
@@ -385,6 +398,7 @@ def gpr_nm_mpod_feature_matrix(
                 q_scale,
                 signal_variance,
                 include_quadratic=include_quadratic,
+                include_full_quadratic=include_full_quadratic,
             )
             for j in range(q_samples.shape[1])
         ]
@@ -406,8 +420,15 @@ def fit_gpr_nm_mpod_continuous_operator(
     ridge_h=0.0,
     ridge_gpr=0.0,
     include_quadratic=True,
+    include_full_quadratic=False,
 ):
-    """Fit dq/dt = c + A q + H q_quad + B z_GPR(q), or omit H if requested."""
+    """Fit GPR-NM-MPOD OpInf dynamics.
+
+    Feature order:
+      lifted linear:  [1, q, z]
+      latent closure: [1, q, q_quad, z]
+      full quadratic: [1, q, q_quad, z, q kron z, z_quad]
+    """
     q = np.asarray(q, dtype=np.float64)
     qdot = np.asarray(qdot, dtype=np.float64)
     if q.ndim != 2 or qdot.ndim != 2:
@@ -415,7 +436,8 @@ def fit_gpr_nm_mpod_continuous_operator(
     if q.shape != qdot.shape:
         raise ValueError(f"q/qdot shape mismatch: {q.shape} vs {qdot.shape}.")
 
-    include_quadratic = bool(include_quadratic)
+    include_full_quadratic = bool(include_full_quadratic)
+    include_quadratic = bool(include_quadratic) or include_full_quadratic
     theta = gpr_nm_mpod_feature_matrix(
         q,
         centers,
@@ -426,6 +448,7 @@ def fit_gpr_nm_mpod_continuous_operator(
         q_scale,
         signal_variance,
         include_quadratic=include_quadratic,
+        include_full_quadratic=include_full_quadratic,
     )
     target = qdot.T
     r = q.shape[0]
@@ -433,12 +456,16 @@ def fit_gpr_nm_mpod_continuous_operator(
     n_linear = r
     n_quadratic = r * (r + 1) // 2 if include_quadratic else 0
     n_gpr = alpha.shape[1]
+    n_mixed = r * n_gpr if include_full_quadratic else 0
+    n_secondary_quadratic = n_gpr * (n_gpr + 1) // 2 if include_full_quadratic else 0
     penalties = np.concatenate(
         [
             np.full(n_const, float(ridge_c), dtype=np.float64),
             np.full(n_linear, float(ridge_a), dtype=np.float64),
             np.full(n_quadratic, float(ridge_h), dtype=np.float64),
             np.full(n_gpr, float(ridge_gpr), dtype=np.float64),
+            np.full(n_mixed, float(ridge_h), dtype=np.float64),
+            np.full(n_secondary_quadratic, float(ridge_h), dtype=np.float64),
         ]
     )
     if np.any(penalties < 0.0):
@@ -466,11 +493,26 @@ def fit_gpr_nm_mpod_continuous_operator(
         "ridge_h": float(ridge_h),
         "ridge_gpr": float(ridge_gpr),
         "include_quadratic": include_quadratic,
+        "include_full_quadratic": include_full_quadratic,
         "num_quadratic_features": int(n_quadratic),
+        "num_mixed_features": int(n_mixed),
+        "num_secondary_quadratic_features": int(n_secondary_quadratic),
     }
 
 
-def rhs(q, coeffs, centers, alpha, kernel, epsilon, q_mean, q_scale, signal_variance=1.0, include_quadratic=True):
+def rhs(
+    q,
+    coeffs,
+    centers,
+    alpha,
+    kernel,
+    epsilon,
+    q_mean,
+    q_scale,
+    signal_variance=1.0,
+    include_quadratic=True,
+    include_full_quadratic=False,
+):
     return np.asarray(coeffs, dtype=np.float64) @ gpr_nm_mpod_feature_vector(
         q,
         centers,
@@ -481,6 +523,7 @@ def rhs(q, coeffs, centers, alpha, kernel, epsilon, q_mean, q_scale, signal_vari
         q_scale,
         signal_variance,
         include_quadratic=include_quadratic,
+        include_full_quadratic=include_full_quadratic,
     )
 
 
@@ -498,6 +541,7 @@ def rollout_rk4(
     max_norm=np.inf,
     substeps=1,
     include_quadratic=True,
+    include_full_quadratic=False,
 ):
     times = np.asarray(times, dtype=np.float64)
     q0 = np.asarray(q0, dtype=np.float64).reshape(-1)
@@ -522,6 +566,7 @@ def rollout_rk4(
                 q_scale,
                 signal_variance,
                 include_quadratic=include_quadratic,
+                include_full_quadratic=include_full_quadratic,
             )
             k2 = rhs(
                 y_next + 0.5 * h * k1,
@@ -534,6 +579,7 @@ def rollout_rk4(
                 q_scale,
                 signal_variance,
                 include_quadratic=include_quadratic,
+                include_full_quadratic=include_full_quadratic,
             )
             k3 = rhs(
                 y_next + 0.5 * h * k2,
@@ -546,6 +592,7 @@ def rollout_rk4(
                 q_scale,
                 signal_variance,
                 include_quadratic=include_quadratic,
+                include_full_quadratic=include_full_quadratic,
             )
             k4 = rhs(
                 y_next + h * k3,
@@ -558,6 +605,7 @@ def rollout_rk4(
                 q_scale,
                 signal_variance,
                 include_quadratic=include_quadratic,
+                include_full_quadratic=include_full_quadratic,
             )
             y_next = y_next + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
         if not np.all(np.isfinite(y_next)) or np.linalg.norm(y_next) > float(max_norm):
@@ -578,7 +626,7 @@ def load_model(path):
     if not os.path.exists(path):
         raise FileNotFoundError(f"GPR-NM-MPOD-OpInf model not found: {path}")
     data = dict(np.load(path, allow_pickle=True))
-    for key in ("model_family", "snapshot_file", "regularizer_convention", "kernel", "model_variant"):
+    for key in ("model_family", "snapshot_file", "regularizer_convention", "kernel", "model_variant", "operator_mode"):
         if key in data:
             data[key] = str(np.asarray(data[key]).item())
     for key in (
@@ -588,6 +636,8 @@ def load_model(path):
         "num_features",
         "num_quadratic_features",
         "num_gpr_features",
+        "num_mixed_features",
+        "num_secondary_quadratic_features",
         "unstable_index",
         "rk4_substeps",
     ):
@@ -597,6 +647,10 @@ def load_model(path):
         data["include_quadratic"] = bool(np.asarray(data["include_quadratic"]).item())
     else:
         data["include_quadratic"] = True
+    if "include_full_quadratic" in data:
+        data["include_full_quadratic"] = bool(np.asarray(data["include_full_quadratic"]).item())
+    else:
+        data["include_full_quadratic"] = False
     for key in (
         "dt",
         "train_final_time",

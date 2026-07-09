@@ -53,7 +53,6 @@ def main(
     max_centers=0,
     rk4_substeps=1,
     max_norm=1e6,
-    include_quadratic=True,
 ):
     x, times, snapshots, train_mask, data = load_fom_dataset(snapshot_file)
     dt = float(np.median(np.diff(times)))
@@ -63,15 +62,9 @@ def main(
     r = int(num_modes)
     total = int(total_modes)
     q_secondary = total - r
-    include_quadratic = bool(include_quadratic)
-    default_model_path = os.path.join(SCRIPT_DIR, "models", "rbf_nm_mpod_opinf_r5_q9.npz")
-    default_results_dir = os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "rbf_nm_mpod_r5_q9")
-    if not include_quadratic and model_path == default_model_path:
-        model_path = os.path.join(SCRIPT_DIR, "models", f"rbf_nm_mpod_noquad_opinf_r{r}_q{q_secondary}.npz")
-    if not include_quadratic and results_dir == default_results_dir:
-        results_dir = os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", f"rbf_nm_mpod_noquad_r{r}_q{q_secondary}")
+    include_quadratic = True
     os.makedirs(results_dir, exist_ok=True)
-    h_candidates = tuple(regularizer_h_candidates) if include_quadratic else (0.0,)
+    h_candidates = tuple(regularizer_h_candidates)
 
     print("\n====================================================")
     print("          KDV RBF-NM-MPOD-OPINF TRAINING")
@@ -119,7 +112,7 @@ def main(
                 centers = manifold["centers"]
                 q_mean = manifold["q_mean"]
                 q_scale = manifold["q_scale"]
-                num_quadratic_features = r * (r + 1) // 2 if include_quadratic else 0
+                num_quadratic_features = r * (r + 1) // 2
                 num_features = 1 + r + num_quadratic_features + centers.shape[1]
 
                 print(
@@ -226,11 +219,7 @@ def main(
     save_model(
         model_path,
         snapshot_file=np.asarray(snapshot_file),
-        model_variant=np.asarray(
-            "rbf_nm_mpod_quadratic_plus_rbf_features"
-            if include_quadratic
-            else "rbf_nm_mpod_linear_plus_rbf_features_no_quadratic"
-        ),
+        model_variant=np.asarray("rbf_nm_mpod_quadratic_plus_rbf_features"),
         include_quadratic=np.asarray(int(include_quadratic), dtype=np.int64),
         num_modes=np.asarray(r, dtype=np.int64),
         total_modes=np.asarray(total, dtype=np.int64),
@@ -266,7 +255,7 @@ def main(
         unstable_index=np.asarray(int(selected["unstable_index"]), dtype=np.int64),
     )
 
-    tag = f"rbf_nm_mpod_opinf_r{r}_q{q_secondary}" if include_quadratic else f"rbf_nm_mpod_noquad_opinf_r{r}_q{q_secondary}"
+    tag = f"rbf_nm_mpod_opinf_r{r}_q{q_secondary}"
     csv_path = os.path.join(results_dir, f"{tag}_grid.csv")
     with open(csv_path, "w", encoding="utf-8") as file:
         file.write(
@@ -305,12 +294,7 @@ def main(
             (
                 "manifold",
                 [
-                    (
-                        "model_family",
-                        "RBF Nonlinear-Map MPOD-OpInf"
-                        if include_quadratic
-                        else "RBF Nonlinear-Map MPOD-OpInf no-quadratic ablation",
-                    ),
+                    ("model_family", "RBF Nonlinear-Map MPOD-OpInf"),
                     ("state_approximation", "s ~= s_ref + V q + Vbar W phi_RBF(q)"),
                     ("num_modes_r", r),
                     ("num_secondary_q", q_secondary),
@@ -326,12 +310,7 @@ def main(
             (
                 "opinf",
                 [
-                    (
-                        "dynamics",
-                        "dq/dt = c + A q + H q_quad + P phi_RBF(q)"
-                        if include_quadratic
-                        else "dq/dt = c + A q + P phi_RBF(q)",
-                    ),
+                    ("dynamics", "dq/dt = c + A q + H q_quad + P phi_RBF(q)"),
                     ("num_features", selected["num_features"]),
                     ("include_quadratic", include_quadratic),
                     ("derivative_estimator", "fourth-order centered finite difference on interior samples"),
@@ -389,11 +368,6 @@ if __name__ == "__main__":
     parser.add_argument("--max-centers", type=int, default=0)
     parser.add_argument("--rk4-substeps", type=int, default=1)
     parser.add_argument("--max-norm", type=float, default=1e6)
-    parser.add_argument(
-        "--no-quadratic",
-        action="store_true",
-        help="Ablation: fit dq/dt = c + A q + P phi_RBF(q), omitting H q_quad.",
-    )
     args = parser.parse_args()
     main(
         snapshot_file=args.snapshot_file,
@@ -411,5 +385,4 @@ if __name__ == "__main__":
         max_centers=args.max_centers,
         rk4_substeps=args.rk4_substeps,
         max_norm=args.max_norm,
-        include_quadratic=not args.no_quadratic,
     )

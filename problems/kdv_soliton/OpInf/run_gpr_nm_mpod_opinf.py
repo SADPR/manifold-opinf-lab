@@ -123,9 +123,9 @@ def plot_gpr_uncertainty_bands(x, times, snapshots, rom, state_p95, snapshot_tim
 
 
 def main(
-    model_path=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_opinf_r5_q9.npz"),
+    model_path=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_latentclosure_r5_q9.npz"),
     snapshot_file=None,
-    results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf", "GPR-NM-MPOD", "r5_q9"),
+    results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf", "GPR-NM-MPOD", "LatentClosure", "r5_q9"),
     max_norm=1e6,
     compute_uncertainty=True,
 ):
@@ -153,9 +153,20 @@ def main(
     train_final_time = float(model["train_final_time"])
     rk4_substeps = int(model.get("rk4_substeps", 1))
     include_quadratic = bool(model.get("include_quadratic", True))
-    label = "GPR-NM-MPOD-OpInf" if include_quadratic else "GPR-NM-MPOD no-quadratic"
-    file_prefix = "gpr_nm_mpod_opinf" if include_quadratic else "gpr_nm_mpod_noquad_opinf"
-    dynamics = "dq/dt = c + A q + H q_quad + B z_GPR(q)" if include_quadratic else "dq/dt = c + A q + B z_GPR(q)"
+    include_full_quadratic = bool(model.get("include_full_quadratic", False))
+    operator_mode = str(model.get("operator_mode", "latent_closure" if include_quadratic else "lifted_linear"))
+    if include_full_quadratic or operator_mode == "full_quadratic":
+        label = "GPR-NM-MPOD-OpInf (full quadratic)"
+        file_prefix = "gpr_nm_mpod_full_quadratic_opinf"
+        dynamics = "dq/dt = c + A q + Hqq q_quad + B z_GPR(q) + Hqz (q kron z_GPR(q)) + Hzz z_quad"
+    elif include_quadratic:
+        label = "GPR-NM-MPOD-OpInf (latent closure)"
+        file_prefix = "gpr_nm_mpod_latent_closure_opinf"
+        dynamics = "dq/dt = c + A q + H q_quad + B z_GPR(q)"
+    else:
+        label = "GPR-NM-MPOD-OpInf (lifted linear)"
+        file_prefix = "gpr_nm_mpod_lifted_linear_opinf"
+        dynamics = "dq/dt = c + A q + B z_GPR(q)"
 
     q_fom = project_snapshots(snapshots, basis, u_ref)
     q_rom, unstable, unstable_index = rollout_rk4(
@@ -172,6 +183,7 @@ def main(
         max_norm=max_norm,
         substeps=rk4_substeps,
         include_quadratic=include_quadratic,
+        include_full_quadratic=include_full_quadratic,
     )
     rom = reconstruct_gpr_nm_mpod_snapshots(
         q_rom,
@@ -250,7 +262,7 @@ def main(
         rom,
         train_final_time,
         spacetime_plot,
-        title=f"KdV {label}, r={num_modes}, q={num_secondary}",
+        title=rf"KdV {label}, r={num_modes}, $\bar r$={num_secondary}",
         rom_label=label,
     )
     plot_snapshot_comparison(
@@ -267,7 +279,7 @@ def main(
         error_history,
         train_final_time,
         error_plot,
-        title=f"{label} error history, r={num_modes}, q={num_secondary}",
+        title=rf"{label} error history, r={num_modes}, $\bar r$={num_secondary}",
     )
     if compute_uncertainty:
         plot_gpr_uncertainty(times, posterior_std, secondary_p95, state_p95_max, train_final_time, uncertainty_plot, label=label)
@@ -304,9 +316,10 @@ def main(
                 "model",
                 [
                     ("model_path", model_path),
+                    ("operator_mode", operator_mode),
                     ("snapshot_file", snapshot_file),
                     ("num_modes_r", num_modes),
-                    ("num_secondary_q", num_secondary),
+                    ("num_secondary_rbar", num_secondary),
                     ("total_modes_r_plus_q", int(model["total_modes"])),
                     ("kernel", kernel),
                     ("epsilon", epsilon),
@@ -315,11 +328,19 @@ def main(
                     ("gpr_training_objective", model.get("gpr_training_objective", "log_marginal_likelihood")),
                     ("negative_log_marginal_likelihood", model.get("negative_log_marginal_likelihood", np.nan)),
                     ("num_gpr_features", int(model["num_gpr_features"])),
+                    ("num_features", int(model.get("num_features", coeffs.shape[1]))),
+                    ("num_quadratic_features", int(model.get("num_quadratic_features", 0))),
+                    ("num_mixed_features", int(model.get("num_mixed_features", 0))),
+                    (
+                        "num_secondary_quadratic_features",
+                        int(model.get("num_secondary_quadratic_features", 0)),
+                    ),
                     ("ridge_c", model["ridge_c"]),
                     ("ridge_a", model["ridge_a"]),
                     ("ridge_h", model["ridge_h"]),
                     ("ridge_gpr", model["ridge_gpr"]),
                     ("include_quadratic", include_quadratic),
+                    ("include_full_quadratic", include_full_quadratic),
                     ("dynamics", dynamics),
                     ("regularizer_convention", model.get("regularizer_convention", "opinf_direct_weight")),
                     ("energy_captured_metric", model["energy_captured"]),
@@ -376,22 +397,16 @@ def main(
     print("            KDV GPR-NM-MPOD-OPINF ROLLOUT")
     print("====================================================")
     print(f"[KDV-GPR-NM-MPOD] model={model_path}")
+    print(f"[KDV-GPR-NM-MPOD] operator_mode={operator_mode}")
     print(f"[KDV-GPR-NM-MPOD] include_quadratic={include_quadratic}")
-    if include_quadratic:
-        print(
-            f"[KDV-GPR-NM-MPOD] r={num_modes}, q={num_secondary}, kernel={kernel}, eps={epsilon:.3e}, "
-            f"noise={float(model['noise']):.3e}, signal_var={signal_variance:.3e}, "
-            f"regularizer=(c={float(model['ridge_c']):.3e}, "
-            f"A={float(model['ridge_a']):.3e}, H={float(model['ridge_h']):.3e}, "
-            f"GPR={float(model['ridge_gpr']):.3e})"
-        )
-    else:
-        print(
-            f"[KDV-GPR-NM-MPOD] r={num_modes}, q={num_secondary}, kernel={kernel}, eps={epsilon:.3e}, "
-            f"noise={float(model['noise']):.3e}, signal_var={signal_variance:.3e}, "
-            f"regularizer=(c={float(model['ridge_c']):.3e}, "
-            f"A={float(model['ridge_a']):.3e}, GPR={float(model['ridge_gpr']):.3e})"
-        )
+    print(f"[KDV-GPR-NM-MPOD] include_full_quadratic={include_full_quadratic}")
+    print(
+        f"[KDV-GPR-NM-MPOD] r={num_modes}, rbar={num_secondary}, kernel={kernel}, eps={epsilon:.3e}, "
+        f"noise={float(model['noise']):.3e}, signal_var={signal_variance:.3e}, "
+        f"regularizer=(c={float(model['ridge_c']):.3e}, "
+        f"A={float(model['ridge_a']):.3e}, H={float(model['ridge_h']):.3e}, "
+        f"GPR={float(model['ridge_gpr']):.3e})"
+    )
     print(f"[KDV-GPR-NM-MPOD] train error={train_error:.6e}")
     print(f"[KDV-GPR-NM-MPOD] prediction error={prediction_error:.6e}")
     print(f"[KDV-GPR-NM-MPOD] full error={full_error:.6e}")
@@ -404,9 +419,9 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run GPR-NM-MPOD-OpInf for KdV.")
-    parser.add_argument("--model-path", default=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_opinf_r5_q9.npz"))
+    parser.add_argument("--model-path", default=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_latentclosure_r5_q9.npz"))
     parser.add_argument("--snapshot-file", default=None)
-    parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf", "GPR-NM-MPOD", "r5_q9"))
+    parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf", "GPR-NM-MPOD", "LatentClosure", "r5_q9"))
     parser.add_argument("--max-norm", type=float, default=1e6)
     parser.add_argument("--no-uncertainty", action="store_true", help="Skip GP posterior uncertainty diagnostics and band plots.")
     args = parser.parse_args()

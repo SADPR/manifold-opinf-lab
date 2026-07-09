@@ -56,10 +56,12 @@ def main(
     num_secondary = int(model["num_secondary"])
     train_final_time = float(model["train_final_time"])
     rk4_substeps = int(model.get("rk4_substeps", 1))
-    include_quadratic = bool(model.get("include_quadratic", True))
-    label = "RBF-NM-MPOD-OpInf" if include_quadratic else "RBF-NM-MPOD no-quadratic"
-    file_prefix = "rbf_nm_mpod_opinf" if include_quadratic else "rbf_nm_mpod_noquad_opinf"
-    dynamics = "dq/dt = c + A q + H q_quad + P phi_RBF(q)" if include_quadratic else "dq/dt = c + A q + P phi_RBF(q)"
+    if not bool(model.get("include_quadratic", True)):
+        raise ValueError("This runner expects a quadratic RBF-NM-MPOD model; regenerate the model with the current training script.")
+    include_quadratic = True
+    label = "RBF-NM-MPOD-OpInf"
+    file_prefix = "rbf_nm_mpod_opinf"
+    dynamics = "dq/dt = c + A q + H q_quad + P phi_RBF(q)"
 
     q_fom = project_snapshots(snapshots, basis, u_ref)
     q_rom, unstable, unstable_index = rollout_rk4(
@@ -97,7 +99,7 @@ def main(
         rom,
         train_final_time,
         spacetime_plot,
-        title=f"KdV {label}, r={num_modes}, q={num_secondary}",
+        title=rf"KdV {label}, r={num_modes}, $\bar r$={num_secondary}",
         rom_label=label,
     )
     plot_snapshot_comparison(
@@ -114,7 +116,7 @@ def main(
         error_history,
         train_final_time,
         error_plot,
-        title=f"{label} error history, r={num_modes}, q={num_secondary}",
+        title=rf"{label} error history, r={num_modes}, $\bar r$={num_secondary}",
     )
     np.savez(
         q_path,
@@ -136,7 +138,7 @@ def main(
                     ("model_path", model_path),
                     ("snapshot_file", snapshot_file),
                     ("num_modes_r", num_modes),
-                    ("num_secondary_q", num_secondary),
+                    ("num_secondary_rbar", num_secondary),
                     ("total_modes_r_plus_q", int(model["total_modes"])),
                     ("kernel", kernel),
                     ("epsilon", epsilon),
@@ -185,18 +187,11 @@ def main(
     print("====================================================")
     print(f"[KDV-RBF-NM-MPOD] model={model_path}")
     print(f"[KDV-RBF-NM-MPOD] include_quadratic={include_quadratic}")
-    if include_quadratic:
-        print(
-            f"[KDV-RBF-NM-MPOD] r={num_modes}, q={num_secondary}, kernel={kernel}, eps={epsilon:.3e}, "
-            f"regularizer=(c={float(model['ridge_c']):.3e}, A={float(model['ridge_a']):.3e}, "
-            f"H={float(model['ridge_h']):.3e}, RBF={float(model['ridge_rbf']):.3e})"
-        )
-    else:
-        print(
-            f"[KDV-RBF-NM-MPOD] r={num_modes}, q={num_secondary}, kernel={kernel}, eps={epsilon:.3e}, "
-            f"regularizer=(c={float(model['ridge_c']):.3e}, A={float(model['ridge_a']):.3e}, "
-            f"RBF={float(model['ridge_rbf']):.3e})"
-        )
+    print(
+        f"[KDV-RBF-NM-MPOD] r={num_modes}, rbar={num_secondary}, kernel={kernel}, eps={epsilon:.3e}, "
+        f"regularizer=(c={float(model['ridge_c']):.3e}, A={float(model['ridge_a']):.3e}, "
+        f"H={float(model['ridge_h']):.3e}, RBF={float(model['ridge_rbf']):.3e})"
+    )
     print(f"[KDV-RBF-NM-MPOD] train error={train_error:.6e}")
     print(f"[KDV-RBF-NM-MPOD] prediction error={prediction_error:.6e}")
     print(f"[KDV-RBF-NM-MPOD] full error={full_error:.6e}")
