@@ -28,7 +28,7 @@ from gpr_nm_mpod_opinf_utils import (
 from kdv.core import write_txt_report
 from standard_opinf_utils import plot_singular_values
 
-OPERATOR_MODES = ("full_quadratic", "latent_closure", "lifted_linear")
+OPERATOR_MODES = ("qc", "pq", "al")
 
 
 def _parse_float_list(text):
@@ -48,38 +48,38 @@ def _parse_float_pair(text):
 
 def _operator_mode_settings(operator_mode):
     mode = str(operator_mode)
-    if mode == "full_quadratic":
+    if mode == "qc":
         return {
             "include_quadratic": True,
             "include_full_quadratic": True,
-            "model_variant": "gpr_nm_mpod_full_quadratic_features",
+            "model_variant": "gpr_nm_mpod_qc_features",
             "dynamics": "dq/dt = c + A q + Hqq q_quad + B z_GPR(q) + Hqz (q kron z_GPR(q)) + Hzz z_quad",
-            "description": "full-quadratic NM-MPOD: [1, q, q_quad, z_GPR(q), q kron z_GPR(q), z_GPR(q)_quad]",
+            "description": "QC-NM-MPOD, quadratic-complete: [1, q, q_quad, z_GPR(q), q kron z_GPR(q), z_GPR(q)_quad]",
         }
-    if mode == "latent_closure":
+    if mode == "pq":
         return {
             "include_quadratic": True,
             "include_full_quadratic": False,
-            "model_variant": "gpr_nm_mpod_latent_closure_features",
+            "model_variant": "gpr_nm_mpod_pq_features",
             "dynamics": "dq/dt = c + A q + H q_quad + B z_GPR(q)",
-            "description": "latent-closure NM-MPOD: [1, q, q_quad, z_GPR(q)]",
+            "description": "PQ-NM-MPOD, primary-quadratic: [1, q, q_quad, z_GPR(q)]",
         }
-    if mode == "lifted_linear":
+    if mode == "al":
         return {
             "include_quadratic": False,
             "include_full_quadratic": False,
-            "model_variant": "gpr_nm_mpod_lifted_linear_features",
+            "model_variant": "gpr_nm_mpod_al_features",
             "dynamics": "dq/dt = c + A q + B z_GPR(q)",
-            "description": "lifted-linear NM-MPOD: [1, q, z_GPR(q)]",
+            "description": "AL-NM-MPOD, augmented-linear: [1, q, z_GPR(q)]",
         }
     raise ValueError(f"Unknown operator mode {operator_mode!r}; choices are {OPERATOR_MODES}.")
 
 
 def main(
     snapshot_file=os.path.join(PROJECT_ROOT, "Results", "FOM", "kdv_soliton_fom_snapshots.npz"),
-    model_path=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_latentclosure_r5_q9.npz"),
-    results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_latentclosure_r5_q9"),
-    operator_mode="latent_closure",
+    model_path=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_pq_r5_q9.npz"),
+    results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_pq_r5_q9"),
+    operator_mode="pq",
     num_modes=5,
     total_modes=14,
     kernels=("gaussian", "matern32"),
@@ -91,7 +91,7 @@ def main(
     signal_variance_bounds=(1e-6, 1e6),
     gpr_optimizer_maxiter=60,
     regularizer_ca_candidates=(1e0,),
-    regularizer_h_candidates=(1e4,),
+    regularizer_h_candidates=(1e-2, 1e0, 1e2, 1e4),
     regularizer_gpr_candidates=(1e0, 1e2, 1e4),
     jitter=1e-12,
     rk4_substeps=1,
@@ -423,9 +423,9 @@ def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fit GPR-NM-MPOD-OpInf for KdV.")
     parser.add_argument("--snapshot-file", default=os.path.join(PROJECT_ROOT, "Results", "FOM", "kdv_soliton_fom_snapshots.npz"))
-    parser.add_argument("--model-path", default=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_latentclosure_r5_q9.npz"))
-    parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_latentclosure_r5_q9"))
-    parser.add_argument("--operator-mode", choices=OPERATOR_MODES, default="latent_closure")
+    parser.add_argument("--model-path", default=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_pq_r5_q9.npz"))
+    parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf", "Training", "gpr_nm_mpod_pq_r5_q9"))
+    parser.add_argument("--operator-mode", choices=OPERATOR_MODES, default="pq")
     parser.add_argument("--num-modes", type=int, default=5)
     parser.add_argument("--total-modes", type=int, default=14)
     parser.add_argument("--kernels", default="gaussian,matern32")
@@ -437,7 +437,7 @@ if __name__ == "__main__":
     parser.add_argument("--signal-variance-bounds", type=_parse_float_pair, default=(1e-6, 1e6))
     parser.add_argument("--gpr-optimizer-maxiter", type=int, default=60)
     parser.add_argument("--regularizer-ca-candidates", "--ridge-ca-candidates", default="1e0")
-    parser.add_argument("--regularizer-h-candidates", "--ridge-h-candidates", default="1e4")
+    parser.add_argument("--regularizer-h-candidates", "--ridge-h-candidates", default="1e-2,1e0,1e2,1e4")
     parser.add_argument("--regularizer-gpr-candidates", "--ridge-gpr-candidates", default="1e0,1e2,1e4")
     parser.add_argument("--jitter", type=float, default=1e-12)
     parser.add_argument("--rk4-substeps", type=int, default=1)

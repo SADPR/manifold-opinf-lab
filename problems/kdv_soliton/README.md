@@ -223,19 +223,36 @@ posterior mean to predict the secondary coordinates directly,
 
 ```text
 s(t) ~= s_ref + V q(t) + Vbar z_GPR(q(t))
-dq/dt = c + A q + H q_quad + B z_GPR(q)
 ```
 
-Unlike the raw RBF-feature model above, the online nonlinear feature block has
-dimension `rbar = 9`, not one feature per training center. For `r = 5`, the learned
-operator therefore has `1 + r + r(r+1)/2 + rbar = 30` features. The GP
-hyperparameters are selected by maximizing the multi-output log marginal
-likelihood; the online model then uses only the posterior mean `z_GPR(q)`.
+`--operator-mode` selects which of the report's three dynamics libraries is
+regressed on top of that decoder (`al`/`pq`/`qc` = augmented-linear /
+primary-quadratic / quadratic-complete; see
+`../../reports/nm_mpod_proposal/`):
 
-Fit the GPR-NM-MPOD-OpInf model:
+```text
+al: dq/dt = c + A q             + B z_GPR(q)
+pq: dq/dt = c + A q + H q_quad  + B z_GPR(q)
+qc: dq/dt = c + A q + H q_quad  + B z_GPR(q) + Hqz (q kron z_GPR(q)) + Hzz z_quad
+```
+
+For `r = 5`, `rbar = 9`, the learned operator has `15`/`30`/`120` features for
+al/pq/qc respectively. The GP hyperparameters are selected by maximizing the
+multi-output log marginal likelihood; the online model then uses only the
+posterior mean `z_GPR(q)`. `pq` and `qc` additionally grid-search the
+block-specific ridge `--regularizer-h-candidates` alongside
+`--regularizer-gpr-candidates` -- do not pin `--regularizer-h-candidates` to a
+single value unless you have already checked it is not near this library's
+instability boundary (`pq` diverges outright for several candidates below
+`--regularizer-h-candidates 1e2` in the retained run; see the report for why
+this matters for the AL/PQ/QC comparison, not just for this one benchmark).
+
+Fit the GPR-NM-MPOD-OpInf model (`al` shown; swap `--operator-mode` and the
+paths for `pq`/`qc`):
 
 ```bash
 python3 -B OpInf/stage1_fit_gpr_nm_mpod_opinf.py \
+  --operator-mode al \
   --num-modes 5 \
   --total-modes 14 \
   --kernels gaussian,matern32 \
@@ -247,38 +264,32 @@ python3 -B OpInf/stage1_fit_gpr_nm_mpod_opinf.py \
   --signal-variance-bounds 1e-6,1e6 \
   --gpr-optimizer-maxiter 60 \
   --regularizer-ca-candidates 1e0 \
-  --regularizer-h-candidates 1e4 \
+  --regularizer-h-candidates 1e-2,1e0,1e2,1e4 \
   --regularizer-gpr-candidates 1e0,1e2,1e4 \
-  --model-path OpInf/models/gpr_nm_mpod_opinf_r5_q9.npz \
-  --results-dir Results/OpInf/Training/gpr_nm_mpod_r5_q9
+  --model-path OpInf/models/gpr_nm_mpod_al_r5_q9.npz \
+  --results-dir Results/OpInf/Training/gpr_nm_mpod_al_r5_q9
 ```
 
 Run the rollout:
 
 ```bash
 python3 -B OpInf/run_gpr_nm_mpod_opinf.py \
-  --model-path OpInf/models/gpr_nm_mpod_opinf_r5_q9.npz \
-  --results-dir Results/OpInf/GPR-NM-MPOD/r5_q9
+  --model-path OpInf/models/gpr_nm_mpod_al_r5_q9.npz \
+  --results-dir Results/OpInf/GPR-NM-MPOD/AL/r5_q9
 ```
 
 The rollout computes GP uncertainty diagnostics by default. Use
 `--no-uncertainty` to skip the posterior variance and 95% band plots.
 
-Current output from this implementation:
+Current output from this implementation, after sweeping the block ridge
+(five significant figures shown because al/pq/qc agree to three; see the
+report for why that agreement is itself the finding):
 
-```text
-selected kernel:          matern32
-selected epsilon:         7.843971e-03
-selected GP noise:        4.754949e-12
-selected signal variance: 1.000000e+06
-negative log marginal ML: -2.992483e+04
-manifold recon. error:    8.575158e-02
-training window error:    8.575197e-02
-prediction window error:  8.770054e-02
-full window error:        8.732352e-02
-posterior std max:        2.090220e-02
-state 95 half-width max:  8.250215e-03
-```
+| variant | train | full window | prediction window |
+| --- | ---: | ---: | ---: |
+| al | 8.57520e-02 | 8.73293e-02 | 8.77077e-02 |
+| pq | 8.57496e-02 | 8.73198e-02 | 8.76965e-02 |
+| qc | 8.57494e-02 | 8.72830e-02 | 8.76509e-02 |
 
 The uncertainty is diagnostic only: it is not fed back into the ODE. The most
 didactic plot is the snapshot band plot. Its first row shows the physical
@@ -286,16 +297,16 @@ solution scale, where the band may be visually thin; its second row shows the
 residual `Reference - GPR-NM-MPOD` with the GP-induced 95% band on the same error
 scale; its third row shows the GP band on its own scale.
 
-Outputs:
+Outputs (`al` shown; `pq`/`qc` write the analogous paths):
 
-- `OpInf/models/gpr_nm_mpod_opinf_r5_q9.npz`
-- `Results/OpInf/Training/gpr_nm_mpod_r5_q9/gpr_nm_mpod_opinf_r5_q9_training_summary.txt`
-- `Results/OpInf/Training/gpr_nm_mpod_r5_q9/gpr_nm_mpod_opinf_r5_q9_regularizer_grid.csv`
-- `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_summary.txt`
-- `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_spacetime.png`
-- `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_snapshots.png`
-- `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_error_history.png`
-- `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_uncertainty.png`
+- `OpInf/models/gpr_nm_mpod_al_r5_q9.npz`
+- `Results/OpInf/Training/gpr_nm_mpod_al_r5_q9/gpr_nm_mpod_opinf_r5_q9_training_summary.txt`
+- `Results/OpInf/Training/gpr_nm_mpod_al_r5_q9/gpr_nm_mpod_opinf_r5_q9_regularizer_grid.csv`
+- `Results/OpInf/GPR-NM-MPOD/AL/r5_q9/gpr_nm_mpod_al_opinf_r5_q9_summary.txt`
+- `Results/OpInf/GPR-NM-MPOD/AL/r5_q9/gpr_nm_mpod_al_opinf_r5_q9_spacetime.png`
+- `Results/OpInf/GPR-NM-MPOD/AL/r5_q9/gpr_nm_mpod_al_opinf_r5_q9_snapshots.png`
+- `Results/OpInf/GPR-NM-MPOD/AL/r5_q9/gpr_nm_mpod_al_opinf_r5_q9_error_history.png`
+- `Results/OpInf/GPR-NM-MPOD/AL/r5_q9/gpr_nm_mpod_al_opinf_r5_q9_uncertainty.png`
 - `Results/OpInf/GPR-NM-MPOD/r5_q9/gpr_nm_mpod_opinf_r5_q9_uncertainty_bands.png`
 
 ## Smoke Test

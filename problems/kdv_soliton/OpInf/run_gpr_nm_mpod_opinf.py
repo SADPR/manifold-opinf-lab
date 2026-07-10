@@ -123,9 +123,9 @@ def plot_gpr_uncertainty_bands(x, times, snapshots, rom, state_p95, snapshot_tim
 
 
 def main(
-    model_path=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_latentclosure_r5_q9.npz"),
+    model_path=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_pq_r5_q9.npz"),
     snapshot_file=None,
-    results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf", "GPR-NM-MPOD", "LatentClosure", "r5_q9"),
+    results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf", "GPR-NM-MPOD", "PQ", "r5_q9"),
     max_norm=1e6,
     compute_uncertainty=True,
 ):
@@ -154,18 +154,18 @@ def main(
     rk4_substeps = int(model.get("rk4_substeps", 1))
     include_quadratic = bool(model.get("include_quadratic", True))
     include_full_quadratic = bool(model.get("include_full_quadratic", False))
-    operator_mode = str(model.get("operator_mode", "latent_closure" if include_quadratic else "lifted_linear"))
-    if include_full_quadratic or operator_mode == "full_quadratic":
-        label = "GPR-NM-MPOD-OpInf (full quadratic)"
-        file_prefix = "gpr_nm_mpod_full_quadratic_opinf"
+    operator_mode = str(model.get("operator_mode", "pq" if include_quadratic else "al"))
+    if include_full_quadratic or operator_mode == "qc":
+        label = "QC-NM-MPOD-OpInf (GPR, quadratic-complete)"
+        file_prefix = "gpr_nm_mpod_qc_opinf"
         dynamics = "dq/dt = c + A q + Hqq q_quad + B z_GPR(q) + Hqz (q kron z_GPR(q)) + Hzz z_quad"
     elif include_quadratic:
-        label = "GPR-NM-MPOD-OpInf (latent closure)"
-        file_prefix = "gpr_nm_mpod_latent_closure_opinf"
+        label = "PQ-NM-MPOD-OpInf (GPR, primary-quadratic)"
+        file_prefix = "gpr_nm_mpod_pq_opinf"
         dynamics = "dq/dt = c + A q + H q_quad + B z_GPR(q)"
     else:
-        label = "GPR-NM-MPOD-OpInf (lifted linear)"
-        file_prefix = "gpr_nm_mpod_lifted_linear_opinf"
+        label = "AL-NM-MPOD-OpInf (GPR, augmented-linear)"
+        file_prefix = "gpr_nm_mpod_al_opinf"
         dynamics = "dq/dt = c + A q + B z_GPR(q)"
 
     q_fom = project_snapshots(snapshots, basis, u_ref)
@@ -419,9 +419,9 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run GPR-NM-MPOD-OpInf for KdV.")
-    parser.add_argument("--model-path", default=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_latentclosure_r5_q9.npz"))
+    parser.add_argument("--model-path", default=os.path.join(SCRIPT_DIR, "models", "gpr_nm_mpod_pq_r5_q9.npz"))
     parser.add_argument("--snapshot-file", default=None)
-    parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf", "GPR-NM-MPOD", "LatentClosure", "r5_q9"))
+    parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf", "GPR-NM-MPOD", "PQ", "r5_q9"))
     parser.add_argument("--max-norm", type=float, default=1e6)
     parser.add_argument("--no-uncertainty", action="store_true", help="Skip GP posterior uncertainty diagnostics and band plots.")
     args = parser.parse_args()

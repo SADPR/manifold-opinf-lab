@@ -57,6 +57,31 @@ def split_train_validation_indices(n_samples, validation_fraction=0.1, random_se
     return train_idx, val_idx
 
 
+def split_train_validation_by_group(group_ids, validation_fraction=0.1, random_seed=42):
+    """Hold out entire groups (e.g. trajectories), not scattered rows.
+
+    Random per-row splits leak information for time series: a held-out
+    snapshot at t_k is trivially predictable from its (still-in-training)
+    neighbors at t_{k-1}, t_{k+1}. Holding out whole trajectories avoids
+    that and gives an honest estimate of generalization to unseen mu.
+    """
+    group_ids = np.asarray(group_ids).reshape(-1)
+    unique_groups = np.unique(group_ids)
+    n_groups = unique_groups.size
+    if n_groups < 2:
+        raise RuntimeError("Need at least two groups for a group-aware train/validation split.")
+    validation_fraction = float(validation_fraction)
+    n_val_groups = int(round(validation_fraction * n_groups)) if validation_fraction > 0.0 else 1
+    n_val_groups = min(max(1, n_val_groups), n_groups - 1)
+    rng = np.random.default_rng(int(random_seed))
+    perm_groups = rng.permutation(n_groups)
+    val_groups = set(unique_groups[perm_groups[:n_val_groups]].tolist())
+    val_mask = np.array([g in val_groups for g in group_ids])
+    val_idx = np.flatnonzero(val_mask)
+    train_idx = np.flatnonzero(~val_mask)
+    return train_idx, val_idx, sorted(val_groups)
+
+
 class Scaler(nn.Module):
     def __init__(self, mean, std, eps=1e-12):
         super().__init__()
@@ -134,8 +159,14 @@ def train_ann_secondary_map(
     random_seed=42,
     device=None,
     print_every=25,
+    group_ids=None,
 ):
-    """Train q_secondary = N_ANN(q_primary, mu) with the 2D POD-ANN MLP pattern."""
+    """Train q_secondary = N_ANN(q_primary, mu) with the 2D POD-ANN MLP pattern.
+
+    If ``group_ids`` (one label per row, e.g. a trajectory index) is given,
+    validation holds out whole groups instead of a random row split, which
+    avoids leaking information across time-adjacent snapshots.
+    """
     x = np.asarray(x, dtype=np.float32)
     y = np.asarray(y, dtype=np.float32)
     if x.ndim != 2 or y.ndim != 2:
@@ -151,11 +182,19 @@ def train_ann_secondary_map(
         device = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
 
-    train_idx, val_idx = split_train_validation_indices(
-        x.shape[0],
-        validation_fraction=validation_fraction,
-        random_seed=random_seed,
-    )
+    validation_groups = None
+    if group_ids is not None:
+        train_idx, val_idx, validation_groups = split_train_validation_by_group(
+            group_ids,
+            validation_fraction=validation_fraction,
+            random_seed=random_seed,
+        )
+    else:
+        train_idx, val_idx = split_train_validation_indices(
+            x.shape[0],
+            validation_fraction=validation_fraction,
+            random_seed=random_seed,
+        )
     x_train = x[train_idx]
     y_train = y[train_idx]
     x_val = x[val_idx]
@@ -256,6 +295,7 @@ def train_ann_secondary_map(
         "y_std": y_std.astype(np.float64),
         "train_indices": train_idx.astype(np.int64),
         "validation_indices": val_idx.astype(np.int64),
+        "validation_groups": np.asarray(validation_groups if validation_groups is not None else [], dtype=np.int64),
         "train_history": np.asarray(train_history, dtype=np.float64),
         "val_history": np.asarray(val_history, dtype=np.float64),
         "best_val_mse": float(best_val),

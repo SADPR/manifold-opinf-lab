@@ -313,7 +313,7 @@ def rhs_continuous(q, mu, model):
     return model["operator"] @ theta_scaled
 
 
-def rollout_continuous_rk4(q0, mu, dt, num_steps, model, max_norm=1e12):
+def rollout_continuous_rk4(q0, mu, dt, num_steps, model, max_norm=1e12, substeps=1):
     """Fixed-step RK4 rollout for the inferred continuous-time reduced model."""
     return rollout_rk4(
         lambda q: rhs_continuous(q, mu, model),
@@ -321,7 +321,7 @@ def rollout_continuous_rk4(q0, mu, dt, num_steps, model, max_norm=1e12):
         dt,
         num_steps,
         max_norm=max_norm,
-        substeps=1,
+        substeps=substeps,
     )
 
 

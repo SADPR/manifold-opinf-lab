@@ -25,19 +25,19 @@ from opinf_utils import load_pod_data, project_snapshots
 from run_opinf import _plot_error_history, _relative_error_history, _safe_tag
 
 
-DEFAULT_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "ann_nm_mpod_fullquadratic_continuous_tuned_r10_q133.npz")
+DEFAULT_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "ann_nm_mpod_qc_continuous_tuned_r10_q133.npz")
 
 
 def _model_label(model):
     if bool(model.get("include_ann_dynamics", True)):
         operator_mode = str(model.get("operator_mode", ""))
         feature_type = str(model.get("dynamics_feature_type", ""))
-        if bool(model.get("include_full_manifold_quadratic", False)):
-            suffix = "full quadratic"
-        elif operator_mode == "latent_closure" or "latent_closure" in feature_type:
-            suffix = "latent closure"
-        elif operator_mode == "lifted_linear" or "lifted_linear" in feature_type:
-            suffix = "lifted linear"
+        if bool(model.get("include_full_manifold_quadratic", False)) or operator_mode == "qc" or "qc" in feature_type:
+            suffix = "QC, quadratic-complete"
+        elif operator_mode == "pq" or "pq" in feature_type:
+            suffix = "PQ, primary-quadratic"
+        elif operator_mode == "al" or "al" in feature_type:
+            suffix = "AL, augmented-linear"
         else:
             suffix = "quadratic" if bool(model.get("include_quadratic", False)) else "no quadratic"
         return f"ANN-NM-MPOD OpInf ({suffix})"

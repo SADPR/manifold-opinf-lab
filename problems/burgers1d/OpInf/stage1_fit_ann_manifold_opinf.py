@@ -156,6 +156,7 @@ def main(
     q_secondary_blocks = []
     qdot_blocks = []
     x_blocks = []
+    group_id_blocks = []
     t0 = time.time()
 
     for imu, mu in enumerate(mu_samples, start=1):
@@ -177,16 +178,21 @@ def main(
         q_secondary_blocks.append(q_secondary)
         qdot_blocks.append(qdot.T)
         x_blocks.append(build_ann_input_matrix(q_primary, mu, include_mu=ann_include_mu))
+        group_id_blocks.append(np.full(q_primary.shape[1], imu - 1, dtype=np.int64))
 
     q_primary_all = np.hstack(q_primary_blocks)
     q_secondary_all = np.hstack(q_secondary_blocks)
     x_all = np.vstack(x_blocks)
     y_all = q_secondary_all.T
+    group_ids_all = np.concatenate(group_id_blocks)
     elapsed_assembly = time.time() - t0
 
     print(f"[ANN-OpInf] ANN input matrix shape: {x_all.shape}")
     print(f"[ANN-OpInf] ANN output matrix shape: {y_all.shape}")
-    print("[ANN-OpInf] Training ANN decoder q_secondary = N_ANN(q_primary, mu)")
+    print(
+        "[ANN-OpInf] Training ANN decoder q_secondary = N_ANN(q_primary, mu) "
+        "(validation holds out whole trajectories, not scattered snapshots)"
+    )
     t0 = time.time()
     ann_fit = train_ann_secondary_map(
         x_all,
@@ -203,6 +209,7 @@ def main(
         random_seed=random_seed,
         device=device,
         print_every=print_every,
+        group_ids=group_ids_all,
     )
     elapsed_ann_fit = time.time() - t0
     print(

@@ -3,6 +3,48 @@
 import numpy as np
 
 
+def effective_degrees_of_freedom(theta, ridge, penalize_intercept=False):
+    """Effective DOF of a ridge fit: sum_i s_i^2 / (s_i^2 + ridge).
+
+    ``theta`` is the *unscaled* design matrix (same convention as
+    ``fit_operator``); centering/scaling of the non-intercept columns is
+    applied internally. This is the standard ridge-regression trace measure
+    of how many of the nominal ``n_features`` columns are actually
+    identified by ``n_samples`` data points, as opposed to sitting in a
+    ridge-shrunk null space. It does not depend on the regression targets,
+    only on the design matrix and the penalty.
+    """
+    theta = np.asarray(theta, dtype=np.float64)
+    if theta.ndim != 2:
+        raise ValueError("theta must be a 2D array.")
+    reg = float(ridge)
+    if reg < 0.0:
+        raise ValueError(f"ridge must be nonnegative, got {ridge}.")
+
+    n_samples, n_features = theta.shape
+    x_scale = np.ones(n_features, dtype=np.float64)
+    if n_features > 1:
+        x_scale[1:] = np.where(np.std(theta[:, 1:], axis=0) > 1e-14, np.std(theta[:, 1:], axis=0), 1.0)
+    theta_scaled = theta / x_scale[None, :]
+
+    if reg == 0.0:
+        return float(min(n_samples, n_features))
+
+    has_intercept_block = not penalize_intercept and n_features > 1
+    z = theta_scaled[:, 1:] if has_intercept_block else theta_scaled
+    intercept_dof = 1.0 if has_intercept_block else 0.0
+
+    # Eigenvalues of z z^T and z^T z share the same nonzero spectrum; always
+    # eigendecompose the smaller of the two (cost is O(min(n,f)^3)).
+    if z.shape[0] <= z.shape[1]:
+        gram_eigs = np.linalg.eigvalsh(z @ z.T)
+    else:
+        gram_eigs = np.linalg.eigvalsh(z.T @ z)
+    gram_eigs = np.clip(gram_eigs, 0.0, None)
+    penalized_dof = float(np.sum(gram_eigs / (gram_eigs + reg)))
+    return intercept_dof + penalized_dof
+
+
 def fit_operator(theta, targets, ridge=1e-8, penalize_intercept=False, error_name="relative_training_error"):
     """Fit ``targets ~= theta @ operator.T`` with column scaling and ridge.
 

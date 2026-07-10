@@ -24,41 +24,42 @@ from ann_manifold_opinf_utils import (
 from burgers.config import DT, GRID_X, NUM_CELLS, NUM_STEPS, TIME_SCHEME, U0
 from burgers.core import get_snapshot_params, load_or_compute_snaps
 from manifold_opinf_utils import estimate_time_derivative, fit_continuous_operator
+from opinf_lab.regression import effective_degrees_of_freedom
 from opinf_utils import load_pod_data, project_snapshots
 from stage1_fit_linear_opinf import write_txt_report
 
 
 DEFAULT_ANN_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "ann_manifold_linear_plus_ann_r10_q133.npz")
-OPERATOR_MODES = ("full_quadratic", "latent_closure", "lifted_linear")
+OPERATOR_MODES = ("qc", "pq", "al")
 
 
 def _operator_mode_settings(operator_mode):
     mode = str(operator_mode)
-    if mode == "full_quadratic":
+    if mode == "qc":
         return {
             "include_quadratic": True,
             "include_full_manifold_quadratic": True,
-            "dynamics_feature_type": "continuous_tuned_full_quadratic_nm_mpod",
-            "description": "full quadratic NM-MPOD: [1, eta, q, eta*q, q_quad, z, q*z, z_quad]",
+            "dynamics_feature_type": "continuous_tuned_qc_nm_mpod",
+            "description": "QC-NM-MPOD, quadratic-complete: [1, eta, q, eta*q, q_quad, z, q*z, z_quad]",
         }
-    if mode == "latent_closure":
+    if mode == "pq":
         return {
             "include_quadratic": True,
             "include_full_manifold_quadratic": False,
-            "dynamics_feature_type": "continuous_tuned_latent_closure_nm_mpod",
-            "description": "latent-closure NM-MPOD: [1, eta, q, eta*q, q_quad, z]",
+            "dynamics_feature_type": "continuous_tuned_pq_nm_mpod",
+            "description": "PQ-NM-MPOD, primary-quadratic: [1, eta, q, eta*q, q_quad, z]",
         }
-    if mode == "lifted_linear":
+    if mode == "al":
         return {
             "include_quadratic": False,
             "include_full_manifold_quadratic": False,
-            "dynamics_feature_type": "continuous_tuned_lifted_linear_nm_mpod",
-            "description": "lifted-linear NM-MPOD: [1, eta, q, eta*q, z]",
+            "dynamics_feature_type": "continuous_tuned_al_nm_mpod",
+            "description": "AL-NM-MPOD, augmented-linear: [1, eta, q, eta*q, z]",
         }
     raise ValueError(f"Unknown operator mode {operator_mode!r}; choices are {OPERATOR_MODES}.")
 
 
-def _default_model_path(num_primary, num_secondary, operator_mode="full_quadratic"):
+def _default_model_path(num_primary, num_secondary, operator_mode="qc"):
     tag = str(operator_mode).replace("_", "")
     name = f"ann_nm_mpod_{tag}_continuous_tuned_r{int(num_primary)}_q{int(num_secondary)}.npz"
     return os.path.join(SCRIPT_DIR, "models", name)
@@ -156,7 +157,7 @@ def main(
     snap_folder=os.path.join(PROJECT_ROOT, "Results", "param_snaps"),
     model_path=None,
     results_dir=os.path.join(PROJECT_ROOT, "Results", "OpInf-ANN-Manifold", "ContinuousTuned", "Training"),
-    operator_mode="full_quadratic",
+    operator_mode="qc",
     dt=DT,
     num_steps=NUM_STEPS,
     ridges=(1e-4, 1e-2, 1e0, 1e2, 1e4, 1e6),
@@ -306,6 +307,11 @@ def main(
         max_norm=max_norm,
         substeps=selected_substeps,
     )
+    effective_dof = effective_degrees_of_freedom(theta_all, selected_ridge, penalize_intercept=False)
+    print(
+        f"[ANN-Cont-Tuned] Effective DOF={effective_dof:.1f} of {theta_all.shape[1]} nominal features "
+        f"({theta_all.shape[0]} training samples)"
+    )
 
     ann_state_dict = {key: val.detach().cpu().clone() for key, val in ann_model["ann_torch_model"].state_dict().items()}
     save_ann_manifold_model(
@@ -346,6 +352,8 @@ def main(
         training_rollout_error=float(all_rollout_error),
         num_validation_trajectories=int(val_idx.size),
         num_training_trajectories=int(train_idx.size),
+        num_training_samples=int(theta_all.shape[0]),
+        effective_dof=float(effective_dof),
         train_trajectory_indices=train_idx,
         validation_trajectory_indices=val_idx,
         ridge_grid=np.asarray(list(ridges), dtype=np.float64),
@@ -371,7 +379,9 @@ def main(
         energy_captured_total_basis=_energy_captured(sigma, n_total),
     )
 
-    summary_path = os.path.join(results_dir, f"ann_continuous_tuned_r{num_primary}_q{num_secondary}_training_summary.txt")
+    summary_path = os.path.join(
+        results_dir, f"ann_continuous_tuned_{operator_mode}_r{num_primary}_q{num_secondary}_training_summary.txt"
+    )
     write_txt_report(
         summary_path,
         [
@@ -409,6 +419,7 @@ def main(
                     ("train_design_matrix_shape", theta_train.shape),
                     ("all_design_matrix_shape", theta_all.shape),
                     ("operator_shape", final_fit["operator"].shape),
+                    ("effective_degrees_of_freedom", float(effective_dof)),
                     ("solve_method", final_fit["solve_method"]),
                     ("relative_derivative_training_error", float(final_fit["relative_derivative_training_error"])),
                     ("selected_validation_rollout_error", float(best["validation_rollout_error"])),
@@ -454,7 +465,7 @@ if __name__ == "__main__":
     parser.add_argument("--snap-folder", default=os.path.join(PROJECT_ROOT, "Results", "param_snaps"))
     parser.add_argument("--model-path", default=None)
     parser.add_argument("--results-dir", default=os.path.join(PROJECT_ROOT, "Results", "OpInf-ANN-Manifold", "ContinuousTuned", "Training"))
-    parser.add_argument("--operator-mode", choices=OPERATOR_MODES, default="full_quadratic")
+    parser.add_argument("--operator-mode", choices=OPERATOR_MODES, default="qc")
     parser.add_argument("--dt", type=float, default=DT)
     parser.add_argument("--num-steps", type=int, default=NUM_STEPS)
     parser.add_argument("--ridges", default="1e-4,1e-2,1e0,1e2,1e4,1e6")

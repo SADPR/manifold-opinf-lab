@@ -424,10 +424,10 @@ def fit_gpr_nm_mpod_continuous_operator(
 ):
     """Fit GPR-NM-MPOD OpInf dynamics.
 
-    Feature order:
-      lifted linear:  [1, q, z]
-      latent closure: [1, q, q_quad, z]
-      full quadratic: [1, q, q_quad, z, q kron z, z_quad]
+    Feature order (AL/PQ/QC operator-library hierarchy):
+      AL, augmented-linear:   [1, q, z]
+      PQ, primary-quadratic:  [1, q, q_quad, z]
+      QC, quadratic-complete: [1, q, q_quad, z, q kron z, z_quad]
     """
     q = np.asarray(q, dtype=np.float64)
     qdot = np.asarray(qdot, dtype=np.float64)
